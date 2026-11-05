@@ -5,7 +5,7 @@ compatibility_date = "2026-10-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "frenzypay"
-database_id = "3aa44272-db3b-4d56-b2ae-64162b6b415f"
+database_id = "943fce53-2f87-4467-9fd2-f753969ef261"
 migrations_dir = "migrations"
 
 [vars]

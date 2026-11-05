@@ -1434,8 +1434,13 @@ dd {
 .login-card h2 {
   font-size: 17px;
 }
+.login-card {
+  display: flex;
+  flex-direction: column;
+}
 .login-card .fine {
   min-height: 3.4em;
+  flex: 1;
 }
 .login button:disabled {
   opacity: 0.6;
@@ -1683,3 +1688,294 @@ a.secondary { display: inline-flex; align-items: center; padding: 0 16px; min-he
 .empty-state .invoice-actions {
   margin-top: 18px;
 }
+
+/* ---- Landing / sign-in: motion + NEAR visuals ---- */
+.login {
+  max-width: 1040px;
+}
+.login-hero {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1.15fr 0.85fr;
+  align-items: center;
+  gap: 24px;
+  padding: 40px 44px;
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at 85% 20%, rgba(185, 240, 110, 0.18), transparent 45%),
+    radial-gradient(circle at 10% 100%, rgba(39, 167, 134, 0.28), transparent 50%), #0f2f29;
+  color: #fff;
+  overflow: hidden;
+  animation: rise 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.login-hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 36px 36px;
+  mask-image: radial-gradient(circle at 70% 50%, #000, transparent 75%);
+  animation: gridshift 14s linear infinite;
+}
+.login-copy {
+  position: relative;
+  z-index: 1;
+}
+.login-hero .eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #b9f06e;
+  font-size: 11px;
+  letter-spacing: 1.6px;
+  margin: 0;
+}
+.login-hero h1 {
+  font-size: clamp(28px, 4vw, 44px);
+  line-height: 1.1;
+  letter-spacing: -1.6px;
+  margin: 16px 0 14px;
+}
+.login-hero .muted {
+  color: #a9c7bb;
+  font-size: 14px;
+  line-height: 1.55;
+  max-width: 46ch;
+}
+.login-hero .muted strong {
+  color: #fff;
+}
+.rotator {
+  display: inline-grid;
+  vertical-align: top;
+  line-height: 1.2;
+  height: 1.2em;
+  overflow: hidden;
+  color: #b9f06e;
+}
+.rotator b {
+  grid-area: 1 / 1;
+  font-weight: inherit;
+  opacity: 0;
+  transform: translateY(70%);
+  animation: swap 10s infinite;
+}
+.rotator b:nth-child(2) { animation-delay: 2s; }
+.rotator b:nth-child(3) { animation-delay: 4s; }
+.rotator b:nth-child(4) { animation-delay: 6s; }
+.rotator b:nth-child(5) { animation-delay: 8s; }
+.near-badge {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #fff;
+  color: #0f2f29;
+  font-size: 15px;
+  flex: none;
+}
+.near-badge.sm {
+  width: 22px;
+  height: 22px;
+  font-size: 13px;
+  background: #0f2f29;
+  color: #b9f06e;
+  margin-right: 8px;
+  vertical-align: -5px;
+}
+.powered {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+/* Orbit visual */
+.orbit {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  max-width: 380px;
+  justify-self: center;
+}
+.orbit-lines {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: rgba(185, 240, 110, 0.25);
+  stroke-width: 1;
+  stroke-dasharray: 3 6;
+  animation: dash 20s linear infinite;
+}
+.orbit-core {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: 28%;
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  background: #b9f06e;
+  color: #0f2f29;
+  font-size: clamp(26px, 5vw, 40px);
+  box-shadow: 0 0 40px rgba(185, 240, 110, 0.45);
+  animation: float 5s ease-in-out infinite;
+}
+.orbit-core small {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  margin-top: 2px;
+}
+.pulse {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid #b9f06e;
+  animation: ping 3s ease-out infinite;
+}
+.pulse.p2 { animation-delay: 1.5s; }
+.orbit-ring {
+  position: absolute;
+  inset: 0;
+  animation: spin 30s linear infinite;
+}
+.orbit-ring.r1 { inset: 3%; }
+.orbit-ring.r2 { inset: 13%; }
+.pos {
+  position: absolute;
+  transform: translate(-50%, -50%);
+}
+.orbit-chip {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px 5px 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  backdrop-filter: blur(4px);
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  animation: counter-spin 30s linear infinite;
+  white-space: nowrap;
+}
+.orbit-chip i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #b9f06e;
+}
+.c2 i { background: #f7931a; }
+.c1 i { background: #8aa0ff; }
+.c3 i { background: #a78bfa; }
+.c4 i { background: #4aa3ff; }
+.c5 i { background: #3fd0a0; }
+.login-options .login-card {
+  transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
+  animation: rise 0.7s 0.15s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.login-options .login-card:nth-child(2) { animation-delay: 0.25s; }
+.login-options .login-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 14px 34px rgba(18, 59, 50, 0.14);
+  border-color: #b9f06e;
+}
+/* Motion across the app */
+main > * {
+  animation: rise 0.45s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.primary, .choice, button {
+  transition: background 0.2s ease, transform 0.15s ease, box-shadow 0.2s ease;
+}
+.primary:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(116, 185, 64, 0.35); }
+.primary:active { transform: translateY(0); }
+.brandmark { transition: transform 0.4s ease; }
+.brand:hover .brandmark { transform: rotate(-8deg) scale(1.08); }
+@keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+@keyframes swap { 0% { opacity: 0; transform: translateY(70%); } 4%, 15% { opacity: 1; transform: none; } 19%, 100% { opacity: 0; transform: translateY(-70%); } }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes counter-spin { to { transform: rotate(-360deg); } }
+@keyframes float { 50% { transform: translate(-50%, calc(-50% - 7px)); } }
+@keyframes ping { from { transform: scale(1); opacity: 0.7; } to { transform: scale(1.9); opacity: 0; } }
+@keyframes dash { to { stroke-dashoffset: -300; } }
+@keyframes gridshift { to { background-position: 36px 36px; } }
+@media (max-width: 860px) {
+  .login-hero { grid-template-columns: 1fr; padding: 28px 22px; }
+  .orbit { max-width: 280px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+  .rotator b:first-child { opacity: 1; transform: none; }
+}
+
+/* ---- Space background with mouse parallax ---- */
+.login-hero {
+  --mx: 0;
+  --my: 0;
+  background: #02080a;
+  isolation: isolate;
+}
+.login-hero::before { display: none; }
+.space { position: absolute; inset: 0; z-index: 0; overflow: hidden; border-radius: inherit; }
+.space-img {
+  position: absolute;
+  inset: -7%;
+  background: #02080a image-set(url(/img/space-sm.jpg) 1x, url(/img/space.jpg) 2x) center / cover no-repeat;
+  transform: translate3d(calc(var(--mx) * -26px), calc(var(--my) * -18px), 0) scale(1.04);
+  animation: drift 40s ease-in-out infinite alternate;
+  will-change: transform;
+}
+.stars {
+  position: absolute;
+  inset: -5%;
+  background-repeat: repeat;
+  will-change: transform;
+}
+.stars.s1 {
+  background-image:
+    radial-gradient(1.4px 1.4px at 20px 30px, #fff, transparent),
+    radial-gradient(1px 1px at 90px 120px, #dff, transparent),
+    radial-gradient(1.6px 1.6px at 160px 60px, #fff, transparent),
+    radial-gradient(1px 1px at 230px 180px, #cfe, transparent);
+  background-size: 260px 220px;
+  opacity: 0.8;
+  transform: translate3d(calc(var(--mx) * -50px), calc(var(--my) * -34px), 0);
+  animation: twinkle 5s ease-in-out infinite alternate;
+}
+.stars.s2 {
+  background-image:
+    radial-gradient(2px 2px at 60px 90px, #b9f06e, transparent),
+    radial-gradient(1.8px 1.8px at 200px 40px, #fff, transparent),
+    radial-gradient(1.2px 1.2px at 130px 200px, #fff, transparent);
+  background-size: 340px 280px;
+  opacity: 0.9;
+  transform: translate3d(calc(var(--mx) * -90px), calc(var(--my) * -60px), 0);
+  animation: twinkle 7s 1.5s ease-in-out infinite alternate;
+}
+.space-shade {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, rgba(2, 8, 10, 0.78) 0%, rgba(2, 8, 10, 0.35) 55%, rgba(2, 8, 10, 0.1) 100%);
+}
+.login-copy, .orbit { z-index: 1; }
+.orbit { transform: translate3d(calc(var(--mx) * 14px), calc(var(--my) * 10px), 0); transition: transform 0.1s linear; }
+@keyframes drift { to { margin: 1.5% 0 0 1.5%; } }
+@keyframes twinkle { from { opacity: 0.35; } to { opacity: 1; } }
+@media (max-width: 860px) {
+  .space-img { transform: translate3d(calc(var(--mx) * -12px), calc(var(--my) * -8px), 0) scale(1.04); }
+  .space-shade { background: rgba(2, 8, 10, 0.55); }
+}
+
+.ni-logo { height: 1em; width: auto; vertical-align: -0.3em; margin-left: 4px; }
+.login-hero .eyebrow .ni-logo { height: 12px; margin-left: 2px; vertical-align: middle; }
+.powered-inline { display: inline-flex; align-items: center; gap: 4px; }
+.powered .ni-logo { height: 12px; vertical-align: middle; }
+
+.orbit-chip img { width: 18px; height: 18px; border-radius: 50%; display: block; flex: none; }
+.orbit-chip { padding: 4px 11px 4px 4px; }

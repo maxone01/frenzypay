@@ -95,7 +95,7 @@ function shortAccount(a: string): string {
 }
 
 const brand = `<a class="brand" href="#/" aria-label="FrenzyPay home"><span class="brandmark">f</span>frenzypay<span class="dot">.</span></a>`;
-const footer = `<footer><span>Non-custodial: FrenzyPay never holds your keys or funds.</span><span>Powered by NEAR Intents</span></footer>`;
+const footer = `<footer><span>Non-custodial: FrenzyPay never holds your keys or funds.</span><span class="powered-inline">Powered by <img class="ni-logo dark" src="/img/near-intents.png" alt="NEAR Intents" /></span></footer>`;
 
 const current = (route: Route, id: string) => (route.nav === id ? ' aria-current="page"' : "");
 
@@ -143,7 +143,7 @@ function wireMore(): void {
 
 function shell(route: Route, s: Session): HTMLElement {
   app.className = "";
-  app.innerHTML = `<aside>${brand}<span class="workspace">YOUR BUSINESS</span><nav aria-label="Main navigation">${navHtml(route)}</nav><div class="sidebottom"><div class="network"><i></i> Powered by NEAR Intents</div><p>FrenzyPay · v0.1</p></div></aside><div class="page"><header><span class="crumb">Workspace <span>/</span> ${esc(route.title)}</span><div class="header-right"><span class="account-chip" title="${esc(s.account)}"><span class="kind">${s.kind === "near" ? "NEAR" : "EVM"}</span><span class="account-id">${esc(shortAccount(s.account))}</span></span><button class="textbutton" id="sign-out">Sign out</button></div></header><main id="content"></main>${footer}</div>`;
+  app.innerHTML = `<aside>${brand}<span class="workspace">YOUR BUSINESS</span><nav aria-label="Main navigation">${navHtml(route)}</nav><div class="sidebottom"><div class="network"><i></i> Powered by <img class=\"ni-logo dark\" src=\"/img/near-intents.png\" alt=\"NEAR Intents\" /></div><p>FrenzyPay · v0.1</p></div></aside><div class="page"><header><span class="crumb">Workspace <span>/</span> ${esc(route.title)}</span><div class="header-right"><span class="account-chip" title="${esc(s.account)}"><span class="kind">${s.kind === "near" ? "NEAR" : "EVM"}</span><span class="account-id">${esc(shortAccount(s.account))}</span></span><button class="textbutton" id="sign-out">Sign out</button></div></header><main id="content"></main>${footer}</div>`;
   app.querySelector<HTMLButtonElement>("#sign-out")!.onclick = signOut;
   wireMore();
   return app.querySelector<HTMLElement>("#content")!;

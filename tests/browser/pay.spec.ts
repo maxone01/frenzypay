@@ -171,7 +171,7 @@ test("XSS-shaped upstream values are escaped", async ({ page }) => {
   await mock(page, "paid", undefined, () => ({ invoiceStatus: "paid", attempts: [pending({ status: "SUCCESS", outcome: "paid", destinationTxHashes: ["<img src=x onerror=alert(1)>"] })] }));
   await page.goto("/#/pay/pub1");
   await expect(page.getByText("<img src=x onerror=alert(1)>")).toBeVisible();
-  await expect(page.locator("img")).toHaveCount(0);
+  await expect(page.locator('img[src="x"]')).toHaveCount(0);
 });
 
 const MISMATCH = "This payment could not be matched to the invoice. Contact the business before paying again.";

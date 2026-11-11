@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { HttpError } from "../../server/http.ts";
 import { createTestDb } from "./d1-shim.ts";
 import { createInvoice, issueInvoice, cancelInvoice } from "../../server/invoices.ts";
 import { createPaymentQuote, listAttempts, saveAttempt, submitDepositTx, toAttemptView, type AttemptRow } from "../../server/payments.ts";
@@ -92,6 +93,14 @@ test("refund address must be valid for the origin chain; unknown assets rejected
   assert.equal(await status(createPaymentQuote(deps, inv.publicId, { originAsset: "nep141:nope", refundTo: REFUND })), 400);
   assert.equal(await status(createPaymentQuote(deps, inv.publicId, { originAsset: 5 as never, refundTo: REFUND })), 400);
   assert.equal(calls.quote.length, 0);
+});
+
+test("burn address is refused locally; an upstream refundTo rejection becomes a plain 400", async () => {
+  const { inv, deps, calls } = await setup();
+  assert.equal(await status(createPaymentQuote(deps, inv.publicId, { originAsset: ARB, refundTo: "0x000000000000000000000000000000000000dEaD" })), 400);
+  assert.equal(calls.quote.length, 0);
+  const rejecting = { ...deps, oneclick: { ...deps.oneclick, quote: async () => { throw new HttpError(502, "NEAR Intents: refundTo is not valid"); } } };
+  await assert.rejects(createPaymentQuote(rejecting, inv.publicId, { originAsset: ARB, refundTo: REFUND }), (e: unknown) => e instanceof HttpError && e.status === 400 && /valid arb refund address/.test(e.message));
 });
 
 test("an expired pending attempt hides its deposit address", async () => {

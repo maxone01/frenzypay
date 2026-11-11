@@ -9,7 +9,9 @@ export function validDestination(chain: string, address: string): boolean {
   if (EVM_CHAINS.has(chain))
     return (
       isAddress(address, { strict: true }) &&
-      !/^0x0{40}$/i.test(address)
+      !/^0x0{40}$/i.test(address) &&
+      // Burn address: 1Click rejects it as refundTo, and funds sent there are gone.
+      !/^0x0{36}dead$/i.test(address)
     );
   switch (chain) {
     case "near":

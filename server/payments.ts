@@ -184,7 +184,14 @@ export async function createPaymentQuote(
   const refundTo = body.refundTo.trim();
   if (!validDestination(token.blockchain, refundTo)) throw new HttpError(400, `Enter a valid ${token.blockchain} refund address.`);
 
-  const q = await oneclick.quote(invoiceQuoteRequest(inv, { originAsset: token.assetId, source: "ORIGIN_CHAIN", refundTo }, now));
+  let q: Quote;
+  try {
+    q = await oneclick.quote(invoiceQuoteRequest(inv, { originAsset: token.assetId, source: "ORIGIN_CHAIN", refundTo }, now));
+  } catch (e) {
+    // Upstream may reject an address our own check let through; say so plainly instead of leaking its raw message.
+    if (e instanceof HttpError && /refundTo is not valid/i.test(e.message)) throw new HttpError(400, `Enter a valid ${token.blockchain} refund address.`);
+    throw e;
+  }
   checkInvoiceQuote(inv, q);
   const row = attemptFor(inv, q, token.assetId, refundTo, now);
   await saveAttempt(db, row);

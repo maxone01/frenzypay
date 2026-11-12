@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { pickToken } from "./helpers/combobox.ts";
 
 // Treasury loop against one stateful fake /api: swap inside the Intents account, pay a bill imported
 // from a FrenzyPay invoice link, run a 2-line payroll, then Home shows all of it. No real funds move.
@@ -158,9 +159,10 @@ test("treasury loop: swap, bill from a FrenzyPay link, 2-line payroll, then Home
   // 1. Swap 1 USDC → wNEAR inside the Intents account.
   await navTo(page, "Swap", isMobile);
   await expect(page.getByRole("heading", { name: "Swap", exact: true })).toBeVisible();
-  await page.locator("#sw-origin").selectOption(USDC);
+  await pickToken(page, "sw-origin", "usdc", /^USDC/);
+  await expect(page.locator("#sw-origin")).toHaveAttribute("data-value", USDC);
   await page.locator("#sw-amount").fill("1");
-  await page.locator("#sw-dest").selectOption(WNEAR);
+  await pickToken(page, "sw-dest", "wnear", /^wNEAR/);
   await page.getByRole("button", { name: "Get quote" }).click();
   await expect(page.locator("#sw-receive")).toHaveText("≈ 0.312456 wNEAR");
   await clean(page);

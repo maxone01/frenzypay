@@ -7,7 +7,7 @@ export type NearRpc = {
 
 const NOT_FOUND = new Set(["UNKNOWN_ACCESS_KEY", "UNKNOWN_ACCOUNT"]);
 
-/** A hung RPC must not stall a request (an approval holds its proposal while it runs). */
+/** A hung RPC must not stall a request. */
 export const RPC_TIMEOUT_MS = 15_000;
 
 export function createNearRpc(url: string, fetchFn: typeof fetch): NearRpc {

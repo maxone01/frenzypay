@@ -7,6 +7,7 @@ export type OneClickToken = {
   blockchain: string;
   decimals: number;
   price?: number;
+  contractAddress?: string;
 };
 
 export type QuoteRequest = {
@@ -117,6 +118,8 @@ export function createOneClick(opts: { baseUrl: string; apiKey?: string; fetch: 
           blockchain: str(t.blockchain),
           decimals: t.decimals,
           ...(typeof t.price === "number" ? { price: t.price } : {}),
+          // The token contract on its own chain; the pay page builds ERC-20 / NEP-141 transfers from it.
+          ...(typeof t.contractAddress === "string" && t.contractAddress && t.contractAddress.length <= 128 ? { contractAddress: t.contractAddress } : {}),
         };
       });
     },

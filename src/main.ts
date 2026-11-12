@@ -1,7 +1,6 @@
 import "./style.css";
 import { escapeHTML as esc } from "../shared/text.ts";
 import { api, ApiError } from "./api.ts";
-import { mountAgent } from "./views/agent.ts";
 import { mountBill } from "./views/bill-detail.ts";
 import { mountBills, mountNewBill } from "./views/bills.ts";
 import { mountHome } from "./views/home.ts";
@@ -13,7 +12,8 @@ import { mountPayrollBatch } from "./views/payroll-batch.ts";
 import { mountLogin } from "./views/login.ts";
 import { mountSwap } from "./views/swap.ts";
 import { mountWithdraw } from "./views/withdraw.ts";
-import { disconnectWallet, type Session } from "./wallet/index.ts";
+import { disconnectWallet, restoreWallet, type Session } from "./wallet/index.ts";
+import { setSignedInAccount } from "./wallet/accounts.ts";
 import { ICONS } from "./icons.ts";
 
 export type Mount = (el: HTMLElement, params: Record<string, string>) => () => void;
@@ -36,7 +36,6 @@ const ROUTES: { pattern: RegExp; name: string; keys: string[]; public?: boolean;
   { pattern: /^\/payroll\/([^/]+)\/?$/, name: "payroll-batch", keys: ["id"], nav: "payroll", title: "Payout" },
   { pattern: /^\/swap\/?$/, name: "swap", keys: [], nav: "swap", title: "Swap" },
   { pattern: /^\/withdraw\/?$/, name: "withdraw", keys: [], nav: "withdraw", title: "Withdraw" },
-  { pattern: /^\/agent\/?$/, name: "agent", keys: [], nav: "agent", title: "Agent" },
   { pattern: /^\/pay\/([^/]+)\/?$/, name: "pay", keys: ["publicId"], public: true, nav: "", title: "Pay invoice" },
 ];
 
@@ -68,11 +67,10 @@ registerView("payroll", mountPayroll);
 registerView("payroll-batch", mountPayrollBatch);
 registerView("swap", mountSwap);
 registerView("withdraw", mountWithdraw);
-registerView("agent", mountAgent);
 registerView("pay", mountPay);
 
 // Desktop sidebar lists every entry. The mobile bottom bar shows the primary ones plus "More",
-// which opens the rest (Payroll, Withdraw, Agent) and Sign out.
+// which opens the rest (Payroll, Withdraw) and Sign out.
 const NAV: [string, string, string, string][] = [
   ["home", "#/", ICONS.home, "Home"],
   ["invoices", "#/invoices", ICONS.invoices, "Invoices"],
@@ -80,7 +78,6 @@ const NAV: [string, string, string, string][] = [
   ["swap", "#/swap", ICONS.swap, "Swap"],
   ["payroll", "#/payroll", ICONS.payroll, "Payroll"],
   ["withdraw", "#/withdraw", ICONS.withdraw, "Withdraw"],
-  ["agent", "#/agent", ICONS.agent, "Agent"],
 ];
 const MOBILE_PRIMARY = new Set(["home", "invoices", "bills", "swap"]);
 
@@ -143,7 +140,7 @@ function wireMore(): void {
 
 function shell(route: Route, s: Session): HTMLElement {
   app.className = "";
-  app.innerHTML = `<aside>${brand}<span class="workspace">YOUR BUSINESS</span><nav aria-label="Main navigation">${navHtml(route)}</nav><div class="sidebottom"><div class="network"><i></i> Powered by <img class=\"ni-logo dark\" src=\"/img/near-intents.png\" alt=\"NEAR Intents\" /></div><p>FrenzyPay · v0.1</p></div></aside><div class="page"><header><span class="crumb">Workspace <span>/</span> ${esc(route.title)}</span><div class="header-right"><span class="account-chip" title="${esc(s.account)}"><span class="kind">${s.kind === "near" ? "NEAR" : "EVM"}</span><span class="account-id">${esc(shortAccount(s.account))}</span></span><button class="textbutton" id="sign-out">Sign out</button></div></header><main id="content"></main>${footer}</div>`;
+  app.innerHTML = `<aside>${brand}<span class="workspace">Your business</span><nav aria-label="Main navigation">${navHtml(route)}</nav><div class="sidebottom"><div class="network">Powered by <img class=\"ni-logo dark\" src=\"/img/near-intents.png\" alt=\"NEAR Intents\" /></div><p>FrenzyPay · v0.1</p></div></aside><div class="page"><header><span class="crumb">Workspace <span>/</span> ${esc(route.title)}</span><div class="header-right"><span class="account-chip" title="${esc(s.account)}"><span class="kind">${s.kind === "near" ? "NEAR" : "EVM"}</span><span class="account-id">${esc(shortAccount(s.account))}</span></span><button class="textbutton" id="sign-out">Sign out</button></div></header><main id="content"></main>${footer}</div>`;
   app.querySelector<HTMLButtonElement>("#sign-out")!.onclick = signOut;
   wireMore();
   return app.querySelector<HTMLElement>("#content")!;
@@ -160,6 +157,7 @@ function bare(title: string): HTMLElement {
 function render(): void {
   unmount();
   unmount = () => {};
+  setSignedInAccount(session ?? null);
   const route = parseRoute(location.hash);
   if (!route) {
     const el = session ? shell({ name: "", params: {}, public: false, nav: "", title: "Not found" }, session) : bare("Not found");
@@ -203,6 +201,7 @@ async function signOut(): Promise<void> {
 async function loadSession(): Promise<void> {
   try {
     session = await api<Session>("/api/me");
+    restoreWallet(session);
   } catch (e) {
     session = null;
     if (!(e instanceof ApiError && e.status === 401)) sessionError = "Could not reach the server. Try again in a moment.";

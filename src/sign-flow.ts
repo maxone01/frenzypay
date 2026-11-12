@@ -5,13 +5,12 @@
 import { erc191SignedData, nep413SignArgs, nep413SignedData, type Nep413Payload } from "../shared/intent-sign.ts";
 import type { TransferView } from "../server/transfers.ts";
 import { api, postJson } from "./api.ts";
-import { ensureWallet, nearPublicKey, registerIntentsKey, signErc191, signNep413, type NearWalletId, type Session } from "./wallet/index.ts";
+import { ensureWallet, nearPublicKey, registerIntentsKey, signErc191, signNep413, type Session } from "./wallet/index.ts";
 
 export type { TransferView };
 export type SignStep = "key" | "sign" | "submit";
 export type SignableQuote = { depositAddress: string; intent: { standard: "nep413" | "erc191"; payload: unknown } };
 export type SignOptions = {
-  nearWallet?: NearWalletId;
   /**
    * The NEAR wallet key must be registered on intents.near before its signature is accepted. Resolve once
    * the key is registered (typically after the user approves `registerKey`), reject to cancel. Without
@@ -53,7 +52,7 @@ export async function signAndSubmit<T = TransferView>(
     onStep("key");
     await confirm(publicKey);
   };
-  await ensureWallet(session, opts.nearWallet);
+  await ensureWallet(session);
   let signedData: unknown;
   if (quote.intent.standard === "erc191") {
     if (typeof quote.intent.payload !== "string") throw new Error("Invalid intent payload.");

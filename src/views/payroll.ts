@@ -5,8 +5,11 @@ import { INTENTS_CHAIN, MAX_CSV_BYTES, MAX_PAYROLL_LINES, parsePayrollCsv, payee
 import { escapeHTML as esc } from "../../shared/text.ts";
 import { validAmount } from "../../shared/units.ts";
 import { api, ApiError, deleteJson, postJson } from "../api.ts";
+import { chainConfig, payeeRemovalSignature, publicNoticeHtml, publishAfterCreate, publishOnChain } from "../chain.ts";
 import { msg } from "./transfer-ui.ts";
-import { chainName } from "./withdraw.ts";
+import { comboboxHtml, wireCombobox, type ComboOptions } from "../ui/combobox.ts";
+import { walletPickHtml, wireWalletPick } from "../ui/wallet-pick.ts";
+import { chainName, tokenItem } from "./withdraw.ts";
 
 type Token = { assetId: string; symbol: string; blockchain: string; decimals: number };
 type Balance = { tokenId: string; symbol: string; blockchain: string; decimals: number; amount: string; formatted: string };
@@ -15,7 +18,6 @@ export type Payee = { id: string; name: string; destinationAsset: string; recipi
 type BatchItem = { id: string; title: string; originAsset: string; createdAt: string; total: number; sent: number };
 
 const USDC = "nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1";
-const MAX_OPTIONS = 100;
 const TEMPLATE = "name,chain,token,address,amount";
 
 /** "NEAR Intents account" or the chain name, for where a payee is paid. */
@@ -37,14 +39,29 @@ export function mountPayroll(el: HTMLElement): () => void {
   let batchError = "";
   let busy = "";
   const picks = new Map<string, string>(); // payee id → amount
-  const payeeForm = { name: "", search: "", dest: "", mode: "DESTINATION_CHAIN" as RecipientType, recipient: "" };
+  const payeeForm = { name: "", dest: "", mode: "DESTINATION_CHAIN" as RecipientType, recipient: "" };
   let payeeError = "";
+  let payeeNote = "";
   let payeeBusy = "";
   const q = <T extends HTMLElement>(s: string) => el.querySelector<T>(s);
   const tokenOf = (id: string) => tokens.find((t) => t.assetId === id);
+  let chainWrites = false;
+  void chainConfig().then((c) => {
+    if (!alive || !c.writes) return;
+    chainWrites = true;
+    draw();
+  });
+  const payeeDestBox = (): ComboOptions => ({
+    id: "payee-dest", label: "Receives", items: tokens.filter((t) => supportedChain(t.blockchain)).map(tokenItem), value: payeeForm.dest,
+    placeholder: "Search token or chain, e.g. USDC or arb",
+    onChange: (v) => {
+      payeeForm.dest = v;
+      draw();
+    },
+  });
 
   function draw() {
-    el.innerHTML = `<div class="heading"><div><p class="eyebrow">PAY PEOPLE</p><h1>Payroll</h1><p class="muted">Pay a team from your NEAR Intents balance. You sign every payment in your wallet, one line at a time.</p></div></div>
+    el.innerHTML = `<div class="heading"><div><p class="eyebrow">Pay people</p><h1>Payroll</h1><p class="muted">Pay a team from your NEAR Intents balance. You sign every payment in your wallet, one line at a time.</p></div></div>
 ${loadError ? `<p class="error" role="alert">${esc(loadError)}</p>` : ""}
 <section class="panel" aria-labelledby="payouts-h"><h2 id="payouts-h">Payouts</h2><div id="batch-list">${batchesHtml()}</div></section>
 <section class="panel" id="new-payout" aria-labelledby="new-payout-h"><h2 id="new-payout-h">New payout</h2>${newPayoutHtml()}</section>
@@ -73,7 +90,7 @@ ${loadError ? `<p class="error" role="alert">${esc(loadError)}</p>` : ""}
     return `<div class="invoice-form-grid"><label>Title<input id="batch-title" maxlength="100" placeholder="e.g. October payroll" value="${esc(draft.title)}"></label><label>Pay from${origin}</label></div>
 ${tabs}<div id="payout-panel" role="tabpanel">${tab === "csv" ? csvHtml() : picksHtml()}</div>
 <p class="fine">Each payee receives exactly the amount on their line. What you send per line includes a small buffer for price movement; any unused part is refunded to your NEAR Intents balance.</p>
-<p class="error" id="batch-error" role="alert">${esc(batchError)}</p>
+${chainWrites ? publicNoticeHtml("batch-chain-notice") : ""}<p class="error" id="batch-error" role="alert">${esc(batchError)}</p>
 <button class="primary" type="button" id="batch-create" ${canCreate() ? "" : "disabled"}>${busy ? esc(busy) : "Create payout"}</button>`;
   }
 
@@ -141,20 +158,16 @@ ${err ? `<span class="error">${esc(err)}</span>` : ""}</div>`;
           )
           .join("")}</div>`
       : `<p class="empty" id="payee-list">No saved payees.</p>`;
-    const s = payeeForm.search.trim().toLowerCase();
-    const label = (t: Token) => `${t.symbol} · ${chainName(t.blockchain)}`;
-    const matches = tokens.filter((t) => supportedChain(t.blockchain) && (!s || label(t).toLowerCase().includes(s) || t.blockchain.includes(s)));
-    const shown = matches.slice(0, MAX_OPTIONS);
     const d = tokenOf(payeeForm.dest);
     const where = payeeForm.mode === "INTENTS" ? "NEAR Intents account" : d ? `Address on ${chainName(d.blockchain)}` : "Address";
     return `${list}<form id="payee-add" novalidate><h3>Add a payee</h3><div class="invoice-form-grid">
 <label>Name<input id="payee-name" maxlength="64" value="${esc(payeeForm.name)}"></label>
 <label>Pay to<select id="payee-mode"><option value="DESTINATION_CHAIN" ${payeeForm.mode === "DESTINATION_CHAIN" ? "selected" : ""}>An address on a chain</option><option value="INTENTS" ${payeeForm.mode === "INTENTS" ? "selected" : ""}>A NEAR Intents account</option></select></label></div>
-<label>Search token or chain<input id="payee-search" autocomplete="off" placeholder="e.g. USDC or arb" value="${esc(payeeForm.search)}"></label>
-<label>Receives<select id="payee-dest" size="5">${shown.map((t) => `<option value="${esc(t.assetId)}" ${t.assetId === payeeForm.dest ? "selected" : ""}>${esc(label(t))}</option>`).join("")}</select></label>
+${comboboxHtml(payeeDestBox())}
 <label>${esc(where)}<input id="payee-recipient" autocomplete="off" spellcheck="false" value="${esc(payeeForm.recipient)}"></label>
+${d && payeeForm.mode === "DESTINATION_CHAIN" ? walletPickHtml({ inputId: "payee-recipient", chain: d.blockchain }) : ""}
 <p class="fine">Funds sent to a wrong address or network usually cannot be recovered.</p>
-<p class="error" id="payee-error" role="alert">${esc(payeeError)}</p>
+${chainWrites ? publicNoticeHtml("payee-chain-notice") : ""}${payeeNote ? `<p class="fine" id="payee-note" role="status">${esc(payeeNote)}</p>` : ""}<p class="error" id="payee-error" role="alert">${esc(payeeError)}</p>
 <button class="primary" type="submit" ${payeeBusy ? "disabled" : ""}>${payeeBusy ? esc(payeeBusy) : "Save payee"}</button></form>`;
   }
 
@@ -224,25 +237,14 @@ ${err ? `<span class="error">${esc(err)}</span>` : ""}</div>`;
     name.oninput = () => (payeeForm.name = name.value);
     const recipient = q<HTMLInputElement>("#payee-recipient")!;
     recipient.oninput = () => (payeeForm.recipient = recipient.value);
+    const pd = tokenOf(payeeForm.dest);
+    if (pd && payeeForm.mode === "DESTINATION_CHAIN") wireWalletPick(el, { inputId: "payee-recipient", chain: pd.blockchain });
     const mode = q<HTMLSelectElement>("#payee-mode")!;
     mode.onchange = () => {
       payeeForm.mode = mode.value === "INTENTS" ? "INTENTS" : "DESTINATION_CHAIN";
       draw();
     };
-    const search = q<HTMLInputElement>("#payee-search")!;
-    search.oninput = () => {
-      payeeForm.search = search.value;
-      const pos = search.selectionStart;
-      draw();
-      const s = q<HTMLInputElement>("#payee-search")!;
-      s.focus();
-      s.setSelectionRange(pos, pos);
-    };
-    const dest = q<HTMLSelectElement>("#payee-dest")!;
-    dest.onchange = () => {
-      payeeForm.dest = dest.value;
-      draw();
-    };
+    wireCombobox(el, payeeDestBox());
     q<HTMLFormElement>("#payee-add")!.onsubmit = (e) => {
       e.preventDefault();
       void addPayee();
@@ -279,6 +281,7 @@ ${err ? `<span class="error">${esc(err)}</span>` : ""}</div>`;
     try {
       const v = await postJson<{ batch: { id: string } }>("/api/payroll/batches", body);
       if (!alive) return;
+      if (chainWrites) publishAfterCreate(v.batch.id);
       location.hash = `#/payroll/${encodeURIComponent(v.batch.id)}`;
       return;
     } catch (e) {
@@ -306,12 +309,26 @@ ${err ? `<span class="error">${esc(err)}</span>` : ""}</div>`;
     if (!payeeForm.recipient.trim()) return setPayeeError("Enter the address.");
     payeeBusy = "Saving…";
     payeeError = "";
+    payeeNote = "";
     draw();
     try {
       const p = await postJson<Payee>("/api/payroll/payees", { name: payeeForm.name.trim(), destinationAsset: d.assetId, recipientType: payeeForm.mode, recipient: payeeForm.recipient.trim() });
       if (!alive) return;
       payees = [...payees, p].sort((a, b) => a.name.localeCompare(b.name));
       Object.assign(payeeForm, { name: "", recipient: "" });
+      if (chainWrites) {
+        // The payee is saved either way; the public record only needs the owner's wallet signature.
+        payeeBusy = "Waiting for wallet…";
+        draw();
+        try {
+          const s = await publishOnChain("payee", p.id);
+          if (s.status === "confirmed") payeeNote = `${p.name} saved and recorded on-chain.`;
+          else if (s.status === "pending") payeeNote = `${p.name} saved. On-chain: pending.`;
+          else payeeError = `${p.name} saved. On-chain: ${s.error ?? "not published"}.`;
+        } catch (e) {
+          payeeError = `${p.name} saved. On-chain: not published (${msg(e)}).`;
+        }
+      }
     } catch (e) {
       payeeError = msg(e);
     }
@@ -321,8 +338,13 @@ ${err ? `<span class="error">${esc(err)}</span>` : ""}</div>`;
 
   async function removePayee(id: string) {
     payeeError = "";
+    payeeNote = "";
     try {
-      await deleteJson(`/api/payroll/payees?id=${encodeURIComponent(id)}`);
+      // A published payee stays public unless removed on-chain; sign that first, but delete regardless.
+      let chain: Awaited<ReturnType<typeof payeeRemovalSignature>> = null;
+      if (chainWrites) chain = await payeeRemovalSignature(id).catch(() => null);
+      if (chain) await api(`/api/payroll/payees?id=${encodeURIComponent(id)}`, { method: "DELETE", body: JSON.stringify({ chain }) });
+      else await deleteJson(`/api/payroll/payees?id=${encodeURIComponent(id)}`);
       if (!alive) return;
       payees = payees.filter((p) => p.id !== id);
       picks.delete(id);

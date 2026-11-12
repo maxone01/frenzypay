@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { base58 } from "@scure/base";
+import { openList, pickToken } from "./helpers/combobox.ts";
 
 const ADDR = "0xabcdef0123456789abcdef0123456789abcdef01";
 const USDC = "nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1";
@@ -69,9 +70,10 @@ test("swap into a 24-decimal token: quote, rate, USD only where priced, sign, su
   await page.goto("/#/swap");
   await expect(page.getByRole("heading", { name: "Swap", exact: true })).toBeVisible();
   // The origin token is not offered as a destination.
-  await expect(page.locator("#sw-dest option")).toHaveCount(2);
+  await expect(await openList(page, "sw-dest")).toHaveCount(2);
+  await page.keyboard.press("Escape");
   await page.locator("#sw-amount").fill("1.5");
-  await page.locator("#sw-dest").selectOption(WNEAR);
+  await pickToken(page, "sw-dest", "wnear", "wNEAR");
   await page.getByLabel("3 %").check();
   await page.getByRole("button", { name: "Get quote" }).click();
 
@@ -99,7 +101,7 @@ test("a destination token without a price shows no USD for it", async ({ page })
   await setup(page, { dest: NOPRICE, sym: "NOP" });
   await page.goto("/#/swap");
   await page.locator("#sw-amount").fill("1.5");
-  await page.locator("#sw-dest").selectOption(NOPRICE);
+  await pickToken(page, "sw-dest", "nop", "NOP");
   await page.getByRole("button", { name: "Get quote" }).click();
   await expect(page.locator("#sw-receive")).toHaveText("≈ 0.468684 NOP");
   // Only the priced origin token shows a USD value.
@@ -113,32 +115,41 @@ test("over-balance is caught before any quote", async ({ page }) => {
   await page.getByRole("button", { name: "Max" }).click();
   await expect(page.locator("#sw-amount")).toHaveValue("2.5");
   await page.locator("#sw-amount").fill("2.6");
-  await page.locator("#sw-dest").selectOption(WNEAR);
+  await pickToken(page, "sw-dest", "wnear", "wNEAR");
   await page.getByRole("button", { name: "Get quote" }).click();
   await expect(page.locator("#sw-error")).toHaveText("Amount exceeds your balance");
   expect(calls.some((c) => c.path === "/api/swaps/quote")).toBe(false);
 });
 
-test("a destination hidden by the search filter is cleared, so no quote goes out for an invisible token", async ({ page }) => {
+test("filtering keeps the chosen destination, and the field shows it again once the list closes", async ({ page }) => {
   const calls = await setup(page);
   await page.goto("/#/swap");
   await page.locator("#sw-amount").fill("1.5");
-  await page.locator("#sw-dest").selectOption(WNEAR);
-  await page.locator("#sw-search").fill("nop");
-  await expect(page.locator("#sw-dest option")).toHaveCount(1);
+  await pickToken(page, "sw-dest", "wnear", "wNEAR");
+  await page.locator("#sw-dest").fill("nop");
+  await expect(page.locator("#sw-dest-list [role=option]")).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  // The committed token is what the closed field shows, so the quote is never for a hidden choice.
+  await expect(page.locator("#sw-dest")).toHaveValue("wNEAR");
+  await expect(page.locator("#sw-dest")).toHaveAttribute("data-value", WNEAR);
+  await page.getByRole("button", { name: "Get quote" }).click();
+  expect(calls.find((c) => c.path === "/api/swaps/quote")!.body).toMatchObject({ destinationAsset: WNEAR });
+});
+
+test("no destination chosen: no quote goes out", async ({ page }) => {
+  const calls = await setup(page);
+  await page.goto("/#/swap");
+  await page.locator("#sw-amount").fill("1.5");
   await page.getByRole("button", { name: "Get quote" }).click();
   await expect(page.locator("#sw-error")).toHaveText("Choose the token to swap to.");
   expect(calls.some((c) => c.path === "/api/swaps/quote")).toBe(false);
-  // Clearing the filter does not silently re-select the old token either.
-  await page.locator("#sw-search").fill("");
-  await expect(page.locator("#sw-dest")).toHaveValue("");
 });
 
 test("New swap returns to the form at once, before balances reload", async ({ page }) => {
   await setup(page, { holdReload: true });
   await page.goto("/#/swap");
   await page.locator("#sw-amount").fill("1.5");
-  await page.locator("#sw-dest").selectOption(WNEAR);
+  await pickToken(page, "sw-dest", "wnear", "wNEAR");
   await page.getByRole("button", { name: "Get quote" }).click();
   await page.getByRole("button", { name: "Sign in wallet" }).click();
   await page.clock.runFor(5_100);

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { openList, pickToken } from "./helpers/combobox.ts";
 
 const USDC = "nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1";
 const ARB = "nep141:arb-0xaf88d065e77c8cc2239327c5edb3a432268e5831.omft.near";
@@ -63,10 +64,12 @@ test("payer picks a token and gets exact instructions without signing in", async
   await expect(page.getByRole("heading", { name: "Pay 0.7 USDC" })).toBeVisible();
   await expect(page.getByText("Paid to alice.near on NEAR Intents")).toBeVisible();
   await expect(page.getByText("Demo <Client>")).toBeVisible();
-  await expect(page.getByRole("option", { name: "XYZ · aleo" })).toHaveCount(0);
-  await page.getByLabel("Search token or chain").fill("arb");
+  // XYZ on an unsupported chain (aleo) is not offered.
+  await expect(await openList(page, "pay-token")).toHaveCount(2);
+  await expect(page.getByRole("option", { name: /XYZ/ })).toHaveCount(0);
+  await page.getByRole("combobox", { name: "Token" }).fill("arb");
   await expect(page.getByRole("option")).toHaveCount(1);
-  await page.getByRole("option", { name: "USDC · arb" }).click();
+  await page.getByRole("option", { name: "USDC, Arbitrum" }).click();
   await expect(page.getByLabel("Refund address on arb")).toBeVisible();
   await page.getByLabel("Refund address on arb").fill(REFUND);
   await page.getByRole("button", { name: "Get payment instructions" }).click();
@@ -88,7 +91,7 @@ test("payer picks a token and gets exact instructions without signing in", async
 test("an expired quote hides the deposit address and offers a new one", async ({ page }) => {
   await mock(page, "issued", new Date(Date.now() + 2000).toISOString());
   await page.goto("/#/pay/pub1");
-  await page.getByRole("option", { name: "USDC · arb" }).click();
+  await pickToken(page, "pay-token", "arb", "USDC, Arbitrum");
   await page.getByLabel("Refund address on arb").fill(REFUND);
   await page.getByRole("button", { name: "Get payment instructions" }).click();
   await expect(page.locator("#pay-address")).toBeVisible();
@@ -101,13 +104,13 @@ test("a bad refund address surfaces the server error", async ({ page }) => {
   await mock(page);
   await page.route("**/quote", (r) => r.fulfill({ status: 400, json: { error: "Enter a valid arb refund address." } }));
   await page.goto("/#/pay/pub1");
-  await page.getByRole("option", { name: "USDC · arb" }).click();
+  await pickToken(page, "pay-token", "arb", "USDC, Arbitrum");
   await page.getByLabel("Refund address on arb").fill("alice.near");
   await page.getByRole("button", { name: "Get payment instructions" }).click();
   await expect(page.getByRole("alert").filter({ hasText: "valid arb refund address" })).toBeVisible();
 });
 
-for (const [status, text] of [["paid", "This invoice has been paid"], ["cancelled", "This invoice was cancelled"]] as const) {
+for (const [status, text] of [["paid", "This invoice is paid in full"], ["cancelled", "This invoice was cancelled"]] as const) {
   test(`${status} invoices show their state and no form`, async ({ page }) => {
     await mock(page, status);
     await page.goto("/#/pay/pub1");

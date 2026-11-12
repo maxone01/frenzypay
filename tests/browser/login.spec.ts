@@ -27,9 +27,32 @@ test("signed-out home shows the wallet login", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Connect NEAR wallet" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Connect EVM wallet" })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Main navigation" })).toHaveCount(0);
+});
+
+test("Connect NEAR wallet opens near-connect's modal with the pinned wallets, keyboard-ready", async ({ page }) => {
+  const external: string[] = [];
+  page.on("request", (r) => {
+    if (!/^http:\/\/(127\.0\.0\.1|localhost)[:/]/.test(r.url()) && !r.url().startsWith("data:")) external.push(r.url());
+  });
+  await mockApi(page, () => ({ status: 401, json: { error: "Not signed in" } }));
+  await page.goto("/#/");
   await page.getByRole("button", { name: "Connect NEAR wallet" }).click();
-  await expect(page.getByRole("button", { name: "Meteor Wallet" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "HOT Wallet" })).toBeVisible();
+  const dialog = page.getByRole("dialog", { name: "Choose a NEAR wallet" });
+  await expect(dialog).toBeVisible();
+  // Exactly the two wallets from shared/near-connect-manifest.ts, as focusable buttons.
+  await expect(dialog.getByRole("button", { name: "HOT Wallet" })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Meteor Wallet" })).toBeVisible();
+  await expect(dialog.locator(".connect-item")).toHaveCount(2);
+  await expect(dialog.getByRole("button", { name: "HOT Wallet" })).toBeFocused();
+  // The settings screen (paste any wallet manifest) is not offered.
+  await expect(dialog.locator(".settings-button")).toBeHidden();
+  // Nothing was fetched to build the list: no remote manifest, no executor until a wallet is picked.
+  expect(external.filter((u) => !u.startsWith("https://storage.herewallet.app/"))).toEqual([]);
+  // Escape closes it and the sign-in says so in plain words.
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(page.locator("#login-status")).toHaveText("You closed the wallet window. No wallet was connected.");
+  await expect(page.getByRole("button", { name: "Connect NEAR wallet" })).toBeEnabled();
 });
 
 test("private routes require sign-in; the pay page does not", async ({ page }) => {

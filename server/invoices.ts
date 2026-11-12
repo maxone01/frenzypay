@@ -130,24 +130,17 @@ export async function getInvoiceByPublicId(db: Db, publicId: string): Promise<In
 export async function getPublicInvoice(db: Db, publicId: string): Promise<PublicInvoice> {
   const inv = await getInvoiceByPublicId(db, publicId);
   const token = settlementToken(inv.tokenId);
+  // The client email is for the owner only; the pay link may be forwarded to anyone.
+  const { clientEmail: _private, ...data } = inv.data;
   return {
     publicId: inv.publicId,
     status: inv.status,
     tokenId: inv.tokenId,
     symbol: token.symbol,
-    data: inv.data,
+    data,
     total: inv.total,
     totalFormatted: formatAmount(BigInt(inv.total), token.decimals),
     payTo: inv.owner,
     dueDate: inv.data.dueDate,
   };
-}
-
-/** The owner's issued invoices, oldest due date first, at most 200 (agent reminders). */
-export async function listIssuedInvoices(db: Db, owner: string): Promise<InvoiceRow[]> {
-  const { results } = await db
-    .prepare(`SELECT ${COLS} FROM invoices WHERE owner = ? AND status = 'issued' ORDER BY json_extract(data, '$.dueDate'), id LIMIT 200`)
-    .bind(owner)
-    .all<Raw>();
-  return results.map(row);
 }

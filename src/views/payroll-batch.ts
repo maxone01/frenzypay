@@ -4,8 +4,9 @@
 // and a line whose quote is still open is resumed instead of re-quoted.
 import { escapeHTML as esc } from "../../shared/text.ts";
 import { api, postJson } from "../api.ts";
+import { mountChainRow, PUBLISH_FLAG } from "../chain.ts";
 import { registerKey, signAndSubmit, type TransferView } from "../sign-flow.ts";
-import { NEAR_WALLETS, walletConnected, type NearWalletId, type Session } from "../wallet/index.ts";
+import type { Session } from "../wallet/index.ts";
 import { networkLabel } from "./payroll.ts";
 import { msg } from "./transfer-ui.ts";
 
@@ -60,9 +61,10 @@ export function mountPayrollBatch(el: HTMLElement, params: Record<string, string
   let error = "";
   let step: Step = { kind: "view" };
   let stop = false;
-  let nearWallet: NearWalletId = "meteor-wallet";
   const id = params.id ?? "";
   const q = <T extends HTMLElement>(s: string) => el.querySelector<T>(s);
+  const chainHost = document.createElement("div");
+  let stopChain: (() => void) | null = null;
 
   el.innerHTML = `<p class="muted" role="status">Loading…</p>`;
 
@@ -85,11 +87,11 @@ export function mountPayrollBatch(el: HTMLElement, params: Record<string, string
       step.kind === "view" && any
         ? `<div class="invoice-actions"><button class="textbutton" type="button" id="send-next">Send next</button><button class="primary" type="button" id="send-all">Send all</button></div>`
         : "";
-    el.innerHTML = `<div class="heading"><div><p class="eyebrow">PAYOUT</p><h1>${esc(v.batch.title)}</h1><p class="muted">Paid from your ${esc(v.batch.originSymbol || "NEAR Intents")} balance · created ${esc(v.batch.createdAt.slice(0, 10))}</p></div><a class="textbutton" href="#/payroll">Back to payroll</a></div>
+    el.innerHTML = `<div class="heading"><div><p class="eyebrow">Payout</p><h1>${esc(v.batch.title)}</h1><p class="muted">Paid from your ${esc(v.batch.originSymbol || "NEAR Intents")} balance · created ${esc(v.batch.createdAt.slice(0, 10))}</p></div><a class="textbutton" href="#/payroll">Back to payroll</a></div>
 <section class="panel" id="batch-summary"><p class="invoice-total"><span>Progress</span><strong id="batch-progress" role="status">${esc(progressText(v.summary))}</strong></p>
 ${v.refreshError ? `<p class="error" role="alert">${esc(v.refreshError)}</p>` : ""}
 ${step.kind === "confirm" ? confirmHtml(step.target, step.confirmed) : ""}${step.kind === "running" ? `<p class="muted" id="batch-run" role="status">${esc(step.text)}</p><button class="textbutton" type="button" id="run-stop" ${stop ? "disabled" : ""}>${stop ? "Stopping after this line…" : "Stop after this line"}</button>` : ""}${step.kind === "register" ? registerHtml(step.publicKey) : ""}
-<p class="error" id="batch-error" role="alert">${esc(error)}</p>${actions}</section>
+<p class="error" id="batch-error" role="alert">${esc(error)}</p>${actions}<div id="batch-chain-slot"></div></section>
 <section class="panel"><div class="table-scroll"><table class="payroll-table" id="batch-lines"><thead><tr><th>#</th><th>Name</th><th>Receives</th><th>To</th><th>Status</th><th></th></tr></thead><tbody>${v.lines
       .map(
         (l) =>
@@ -101,16 +103,21 @@ ${step.kind === "confirm" ? confirmHtml(step.target, step.confirmed) : ""}${step
       )
       .join("")}</tbody></table></div>
 <p class="fine">A line is sent only once. If a payment fails or is refunded, the funds return to your NEAR Intents balance and you can retry that line.</p></section>`;
+    // One persistent On-chain row, moved back into each redraw so its state and wallet prompt survive polling.
+    if (!stopChain) {
+      const auto = sessionStorage.getItem(PUBLISH_FLAG) === v.batch.id;
+      if (auto) sessionStorage.removeItem(PUBLISH_FLAG);
+      stopChain = mountChainRow(chainHost, "batch", v.batch.id, { autoPublish: auto });
+    }
+    q("#batch-chain-slot")?.replaceWith(chainHost);
     wire();
   }
 
   function confirmHtml(t: Target, confirmed: boolean): string {
     const k = targets(t).length;
-    const needsNearWallet = session?.kind === "near" && !walletConnected(session);
     return `<div id="batch-confirm"><h2>Send ${k} ${k === 1 ? "payment" : "payments"}</h2>
 <p class="muted">Your wallet asks you to sign each line separately. Each payee receives exactly the amount on their line; what you send includes a small buffer for price movement, and any unused part is refunded to your NEAR Intents balance.</p>
 <label class="radio"><input type="checkbox" id="run-confirm" ${confirmed ? "checked" : ""}> I checked the names, networks and addresses</label>
-${needsNearWallet ? `<label>Wallet<select id="batch-wallet">${NEAR_WALLETS.map((x) => `<option value="${x.id}" ${x.id === nearWallet ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select></label>` : ""}
 <div class="invoice-actions"><button class="textbutton" type="button" id="run-back">Back</button><button class="primary" type="button" id="run-start" ${confirmed ? "" : "disabled"}>Start sending</button></div></div>`;
   }
 
@@ -131,8 +138,6 @@ ${needsNearWallet ? `<label>Wallet<select id="batch-wallet">${NEAR_WALLETS.map((
         s.confirmed = box.checked;
         q<HTMLButtonElement>("#run-start")!.disabled = !s.confirmed;
       };
-      const w = q<HTMLSelectElement>("#batch-wallet");
-      if (w) w.onchange = () => (nearWallet = w.value as NearWalletId);
       q<HTMLButtonElement>("#run-back")!.onclick = () => {
         step = { kind: "view" };
         draw();
@@ -210,7 +215,6 @@ ${needsNearWallet ? `<label>Wallet<select id="batch-wallet">${NEAR_WALLETS.map((
             if (st !== "key") setRunning(`${label}: ${st === "sign" ? "waiting for wallet…" : "submitting…"}`);
           },
           {
-            nearWallet,
             confirmKeyRegistration: (publicKey) =>
               new Promise<void>((resolve, reject) => {
                 step = { kind: "register", publicKey, resolve, reject };
@@ -264,6 +268,7 @@ ${needsNearWallet ? `<label>Wallet<select id="batch-wallet">${NEAR_WALLETS.map((
   return () => {
     alive = false;
     window.clearTimeout(poll);
+    stopChain?.();
     if (step.kind === "register") step.reject(new Error("Cancelled"));
   };
 }

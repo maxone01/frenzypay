@@ -3,6 +3,7 @@ import { invoiceTotal, type InvoiceDraft, type InvoiceRow } from "../../shared/i
 import { escapeHTML as esc } from "../../shared/text.ts";
 import { formatAmount, baseUnits } from "../../shared/units.ts";
 import { api, ApiError } from "../api.ts";
+import { chainConfig, mountChainRow, publicNoticeHtml } from "../chain.ts";
 import { statusChip, totalLabel, txLinks } from "./invoices.ts";
 
 type Payment = {
@@ -38,6 +39,44 @@ export function paymentsHtml(p: Payments, symbol: string): string {
   return `<section class="panel" id="invoice-payments"><div class="section-title"><h2>Payments</h2></div>${p.refreshError ? `<p class="error" role="alert">${esc(p.refreshError)}</p>` : ""}${
     rows.length ? `<div class="payment-list">${rows.join("")}</div>` : `<p class="empty">No payment attempts yet.</p>`
   }</section>`;
+}
+
+type EmailRecord = { to: string; status: "sending" | "sent" | "failed"; error?: string; sentAt: string };
+type EmailState = { configured: boolean; last: EmailRecord | null };
+type IssueEmail = { status: "sent" | "failed" | "sending" | "not_configured"; error?: string };
+
+const when = (iso: string) => `${iso.slice(0, 16).replace("T", " ")} UTC`;
+
+/** Message for the invoice page right after Issue, kept across the redirect from #/invoices/new. */
+let issueNotice: { id: string; text: string; failed: boolean } | null = null;
+/** Set by Issue (survives the new → id route change) so the view opens the wallet to publish the record. */
+let publishAfterIssue: string | null = null;
+
+export function issueEmailNotice(email: IssueEmail | undefined, to: string | undefined): { text: string; failed: boolean } | null {
+  if (!email || !to) return null;
+  if (email.status === "sent") return { text: `Invoice issued and emailed to ${to}.`, failed: false };
+  if (email.status === "not_configured") return { text: "Invoice issued. Email is not configured, so copy the link below and send it yourself.", failed: false };
+  return { text: `Invoice issued, email failed. Copy the link.${email.error ? ` (${email.error})` : ""}`, failed: true };
+}
+
+/** Email block on an issued invoice: last attempt, and Send/Resend while the invoice is open. */
+export function emailHtml(i: InvoiceRow, st: EmailState | null | undefined): string {
+  const to = i.data.clientEmail;
+  if (!to) return i.status === "issued" ? `<p class="fine">No client email on this invoice. Copy the payment link and send it yourself.</p>` : "";
+  let line: string;
+  if (st === undefined) line = `<p class="muted" role="status">Checking email…</p>`;
+  else if (st === null) line = `<p class="fine">Could not load the email status.</p>`;
+  else if (!st.configured) line = `<p class="fine">Email is not configured. Copy the link and send it to ${esc(to)} yourself.</p>`;
+  else if (!st.last) line = `<p class="fine">Not emailed yet. Client email: ${esc(to)}</p>`;
+  else if (st.last.status === "sent") line = `<p class="fine">Emailed to ${esc(st.last.to)} on ${esc(when(st.last.sentAt))}.</p>`;
+  else if (st.last.status === "failed")
+    line = `<p class="fine">Email to ${esc(st.last.to)} failed on ${esc(when(st.last.sentAt))}${st.last.error ? `: ${esc(st.last.error)}` : "."}</p>`;
+  else line = `<p class="fine">Sending to ${esc(st.last.to)}…</p>`;
+  const button =
+    i.status === "issued" && st?.configured
+      ? `<button class="secondary" type="button" id="invoice-email-send">${st.last ? "Resend email" : "Send email"}</button>`
+      : "";
+  return `<div class="invoice-email" id="invoice-email"><h3>Email to client</h3>${line}${button ? `<div class="invoice-actions">${button}</div>` : ""}<p class="fine" id="invoice-email-status" role="status"></p></div>`;
 }
 
 const post = <T>(path: string, body?: unknown) => api<T>(path, { method: "POST", ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
@@ -77,11 +116,11 @@ export function details(d: InvoiceDraft): string {
     }
     return `<div class="invoice-line-view"><span>${esc(l.description)}</span><span>${esc(l.quantity)}</span><span>${esc(l.unitPrice)}</span><span>${esc(lt)}</span></div>`;
   };
-  return `<div class="invoice-parties"><div><span class="eyebrow">FROM</span><strong>${esc(d.issuer)}</strong></div><div><span class="eyebrow">BILL TO</span><strong>${esc(d.client)}</strong></div><div><span class="eyebrow">DUE DATE (UTC)</span><strong>${esc(d.dueDate)}</strong></div></div><div class="invoice-lines-view"><div class="invoice-line-head"><span>Description</span><span>Qty</span><span>Unit price</span><span>Line total</span></div>${d.items.map(line).join("")}</div>${totalHtml(d)}${d.notes ? `<p class="invoice-note">${esc(d.notes)}</p>` : ""}`;
+  return `<div class="invoice-parties"><div><span class="eyebrow">From</span><strong>${esc(d.issuer)}</strong></div><div><span class="eyebrow">Bill to</span><strong>${esc(d.client)}</strong></div><div><span class="eyebrow">Due date (UTC)</span><strong>${esc(d.dueDate)}</strong></div></div><div class="invoice-lines-view"><div class="invoice-line-head"><span>Description</span><span>Qty</span><span>Unit price</span><span>Line total</span></div>${d.items.map(line).join("")}</div>${totalHtml(d)}${d.notes ? `<p class="invoice-note">${esc(d.notes)}</p>` : ""}`;
 }
 
 function editor(d: InvoiceDraft, isNew: boolean): string {
-  return `<section class="panel invoice-editor"><div class="section-title"><h2>${isNew ? "New invoice" : "Edit draft"}</h2></div><form id="invoice-form" novalidate><div class="invoice-form-grid"><label>Invoice number<input id="invoice-number" maxlength="32" value="${esc(d.number)}"></label><label>Due date (UTC)<input id="invoice-due" type="date" value="${esc(d.dueDate)}"></label><label>Your business name<input id="invoice-issuer" maxlength="64" placeholder="Example Studio" value="${esc(d.issuer)}"></label><label>Client<input id="invoice-client" maxlength="64" placeholder="Demo Client" value="${esc(d.client)}"></label><label>Settlement token<select id="invoice-token">${SETTLEMENT_TOKENS.map((t) => `<option value="${esc(t.tokenId)}" ${t.tokenId === d.tokenId ? "selected" : ""}>${esc(t.symbol)}</option>`).join("")}</select></label></div><h3>Line items</h3><p class="fine">Prices are in the settlement token. Whole quantities only; maximum 10 lines.</p><div id="invoice-edit-lines">${d.items.map((l, i) => `<div class="invoice-edit-line"><label>Description ${i + 1}<input data-line="description" maxlength="100" value="${esc(l.description)}"></label><label>Quantity ${i + 1}<input data-line="quantity" inputmode="numeric" maxlength="5" value="${esc(l.quantity)}"></label><label>Unit price ${i + 1}<input data-line="unitPrice" inputmode="decimal" maxlength="32" value="${esc(l.unitPrice)}"></label><button type="button" class="textbutton" data-remove="${i}" aria-label="Remove line ${i + 1}" ${d.items.length === 1 ? "disabled" : ""}>Remove</button></div>`).join("")}</div><button class="textbutton" type="button" id="invoice-add-line" ${d.items.length >= 10 ? "disabled" : ""}>+ Add line item</button><label>Notes<textarea id="invoice-notes" rows="3" maxlength="280">${esc(d.notes)}</textarea></label><div id="invoice-totals">${totalHtml(d)}</div><p class="fine">Issuing locks the invoice and makes its payment link live. Payment goes to your own account; FrenzyPay never holds funds.</p><p class="error" id="invoice-error" role="alert"></p><div class="invoice-actions"><button class="textbutton" type="button" id="invoice-save">Save draft</button><button class="primary" type="submit">Issue invoice</button></div></form></section>`;
+  return `<section class="panel invoice-editor"><div class="section-title"><h2>${isNew ? "New invoice" : "Edit draft"}</h2></div><form id="invoice-form" novalidate><div class="invoice-form-grid"><label>Invoice number<input id="invoice-number" maxlength="32" value="${esc(d.number)}"></label><label>Due date (UTC)<input id="invoice-due" type="date" value="${esc(d.dueDate)}"></label><label>Your business name<input id="invoice-issuer" maxlength="64" placeholder="Example Studio" value="${esc(d.issuer)}"></label><label>Client<input id="invoice-client" maxlength="64" placeholder="Demo Client" value="${esc(d.client)}"></label><label>Client email (optional)<input id="invoice-client-email" type="email" maxlength="254" autocomplete="off" spellcheck="false" placeholder="billing@client.example" aria-describedby="invoice-issue-note" value="${esc(d.clientEmail ?? "")}"></label><label>Settlement token<select id="invoice-token">${SETTLEMENT_TOKENS.map((t) => `<option value="${esc(t.tokenId)}" ${t.tokenId === d.tokenId ? "selected" : ""}>${esc(t.symbol)}</option>`).join("")}</select></label></div><h3>Line items</h3><p class="fine">Prices are in the settlement token. Whole quantities only; maximum 10 lines.</p><div id="invoice-edit-lines">${d.items.map((l, i) => `<div class="invoice-edit-line"><label>Description ${i + 1}<input data-line="description" maxlength="100" value="${esc(l.description)}"></label><label>Quantity ${i + 1}<input data-line="quantity" inputmode="numeric" maxlength="5" value="${esc(l.quantity)}"></label><label>Unit price ${i + 1}<input data-line="unitPrice" inputmode="decimal" maxlength="32" value="${esc(l.unitPrice)}"></label><button type="button" class="textbutton" data-remove="${i}" aria-label="Remove line ${i + 1}" ${d.items.length === 1 ? "disabled" : ""}>Remove</button></div>`).join("")}</div><button class="textbutton" type="button" id="invoice-add-line" ${d.items.length >= 10 ? "disabled" : ""}>+ Add line item</button><label>Notes<textarea id="invoice-notes" rows="3" maxlength="280">${esc(d.notes)}</textarea></label><div id="invoice-totals">${totalHtml(d)}</div><p class="fine" id="invoice-issue-note">Issuing locks the invoice and makes its payment link live. With a client email, Issue also emails them the link. Payment goes to your own account; FrenzyPay never holds funds.</p><div id="invoice-chain-notice"></div><p class="error" id="invoice-error" role="alert"></p><div class="invoice-actions"><button class="textbutton" type="button" id="invoice-save">Save draft</button><button class="primary" type="submit">Issue invoice</button></div></form></section>`;
 }
 
 export function mountInvoice(el: HTMLElement, params: Record<string, string>): () => void {
@@ -89,8 +128,9 @@ export function mountInvoice(el: HTMLElement, params: Record<string, string>): (
   const isNew = params.id === "new";
   let inv: InvoiceRow | null = null;
   let draft: InvoiceDraft = blankDraft();
+  let stopChain: () => void = () => {};
 
-  const q = <T extends HTMLElement>(sel: string) => el.querySelector<T>(sel)!;
+  const q =<T extends HTMLElement>(sel: string) => el.querySelector<T>(sel)!;
   const fail = (e: unknown) => {
     const box = el.querySelector("#invoice-error");
     if (box) box.textContent = e instanceof Error ? e.message : "Something went wrong.";
@@ -104,6 +144,7 @@ export function mountInvoice(el: HTMLElement, params: Record<string, string>): (
       dueDate: q<HTMLInputElement>("#invoice-due").value,
       issuer: q<HTMLInputElement>("#invoice-issuer").value,
       client: q<HTMLInputElement>("#invoice-client").value,
+      clientEmail: q<HTMLInputElement>("#invoice-client-email").value.trim(),
       tokenId: q<HTMLSelectElement>("#invoice-token").value,
       notes: q<HTMLTextAreaElement>("#invoice-notes").value,
       items: Array.from(el.querySelectorAll<HTMLElement>(".invoice-edit-line")).map((row) => ({
@@ -126,6 +167,10 @@ export function mountInvoice(el: HTMLElement, params: Record<string, string>): (
   function drawEditor() {
     el.innerHTML = heading(isNew && !inv ? "New invoice" : draft.number || "Draft", inv ? statusChip(inv) : "") + editor(draft, isNew && !inv);
     const form = q<HTMLFormElement>("#invoice-form");
+    void chainConfig().then((c) => {
+      const box = el.querySelector("#invoice-chain-notice");
+      if (alive && c.writes && box) box.innerHTML = publicNoticeHtml() + `<p class="fine">After issuing, your NEAR wallet asks you to sign the public record. FrenzyPay pays the network fee.</p>`;
+    });
     form.addEventListener("input", () => {
       q("#invoice-totals").innerHTML = totalHtml(readForm());
     });
@@ -153,8 +198,11 @@ export function mountInvoice(el: HTMLElement, params: Record<string, string>): (
       ev.preventDefault();
       try {
         const saved = await save();
-        const issued = await post<InvoiceRow>(`/api/invoices/${encodeURIComponent(saved.id)}/issue`);
+        const { email, ...issued } = await post<InvoiceRow & { email?: IssueEmail }>(`/api/invoices/${encodeURIComponent(saved.id)}/issue`);
         inv = issued;
+        const n = issueEmailNotice(email, issued.data.clientEmail);
+        issueNotice = n ? { id: issued.id, ...n } : null;
+        publishAfterIssue = issued.id;
         if (isNew) location.replace(`#/invoices/${encodeURIComponent(issued.id)}`);
         else drawView();
       } catch (e) {
@@ -190,14 +238,61 @@ export function mountInvoice(el: HTMLElement, params: Record<string, string>): (
     if (box) box.outerHTML = paymentsHtml(p, settlementToken(i.tokenId).symbol);
   }
 
+  /** undefined while loading, null when it failed. */
+  let emailSt: EmailState | null | undefined;
+
+  async function loadEmail(i: InvoiceRow) {
+    let st: EmailState | null;
+    try {
+      st = await api<EmailState>(`/api/invoices/${encodeURIComponent(i.id)}/send`);
+    } catch {
+      st = null;
+    }
+    if (!alive || inv !== i) return;
+    emailSt = st;
+    redrawEmail(i);
+  }
+
+  function redrawEmail(i: InvoiceRow, status = "") {
+    const box = el.querySelector("#invoice-email");
+    if (!box) return;
+    box.outerHTML = emailHtml(i, emailSt);
+    wireEmail(i);
+    const s = el.querySelector("#invoice-email-status");
+    if (s && status) s.textContent = status;
+  }
+
+  function wireEmail(i: InvoiceRow) {
+    const btn = el.querySelector<HTMLButtonElement>("#invoice-email-send");
+    if (!btn) return;
+    btn.onclick = async () => {
+      btn.disabled = true;
+      q("#invoice-email-status").textContent = "Sending…";
+      let msg: string;
+      try {
+        const r = await post<EmailRecord>(`/api/invoices/${encodeURIComponent(i.id)}/send`);
+        if (emailSt) emailSt = { ...emailSt, last: r };
+        msg = r.status === "sent" ? `Email sent to ${r.to}.` : "Email failed. Copy the link and send it yourself, or try again later.";
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 503 && emailSt) emailSt = { ...emailSt, configured: false };
+        msg = e instanceof Error ? e.message : "Email failed.";
+      }
+      if (alive && inv === i) redrawEmail(i, msg);
+    };
+  }
+
   function drawView(payments?: Payments) {
     const i = inv!;
     const link = `${location.origin}${location.pathname}#/pay/${encodeURIComponent(i.publicId)}`;
+    const notice = issueNotice?.id === i.id ? issueNotice : null;
+    issueNotice = null;
     el.innerHTML =
       heading(i.data.number, statusChip(i)) +
-      `<article class="panel invoice-document"><p class="fine">Amount ${esc(totalLabel(i))}${i.issuedAt ? ` · issued ${esc(i.issuedAt.slice(0, 10))}` : ""}${i.paidAt ? ` · paid ${esc(i.paidAt.slice(0, 10))}` : ""}</p>${details(i.data)}${
+      `<article class="panel invoice-document">${
+        notice ? `<p class="${notice.failed ? "error" : "fine"}" role="${notice.failed ? "alert" : "status"}">${esc(notice.text)}</p>` : ""
+      }<p class="fine">Amount ${esc(totalLabel(i))}${i.issuedAt ? ` · issued ${esc(i.issuedAt.slice(0, 10))}` : ""}${i.paidAt ? ` · paid ${esc(i.paidAt.slice(0, 10))}` : ""}</p><div id="invoice-chain"></div>${details(i.data)}${
         i.status === "issued" || i.status === "paid"
-          ? `<label>Payment link<input id="invoice-link" readonly value="${esc(link)}"></label><div class="invoice-actions"><button class="primary" id="invoice-copy">Copy payment link</button>${i.status === "issued" ? `<button class="textbutton" id="invoice-cancel">Cancel invoice</button>` : ""}</div>`
+          ? `<label>Payment link<input id="invoice-link" readonly value="${esc(link)}"></label><div class="invoice-actions"><button class="primary" id="invoice-copy">Copy payment link</button>${i.status === "issued" ? `<button class="textbutton" id="invoice-cancel">Cancel invoice</button>` : ""}</div>${emailHtml(i, emailSt)}`
           : i.status === "cancelled"
             ? `<p class="fine">This invoice was cancelled. Its payment link no longer accepts payment.</p>`
             : ""
@@ -207,7 +302,16 @@ export function mountInvoice(el: HTMLElement, params: Record<string, string>): (
         : payments
           ? paymentsHtml(payments, settlementToken(i.tokenId).symbol)
           : `<section class="panel" id="invoice-payments"><div class="section-title"><h2>Payments</h2></div><p class="muted" role="status">Checking payments…</p></section>`);
+    stopChain();
+    // Straight after Issue the owner already saw the public-record notice, so the wallet prompt opens directly.
+    const chainHost = el.querySelector<HTMLElement>("#invoice-chain");
+    if (chainHost) stopChain = mountChainRow(chainHost, "invoice", i.id, { autoPublish: publishAfterIssue === i.id });
+    if (publishAfterIssue === i.id) publishAfterIssue = null;
     if (i.status !== "draft" && !payments) void loadPayments(i);
+    if ((i.status === "issued" || i.status === "paid") && i.data.clientEmail) {
+      if (emailSt === undefined) void loadEmail(i);
+      else wireEmail(i);
+    }
     el.querySelector<HTMLButtonElement>("#invoice-copy")?.addEventListener("click", async () => {
       try {
         await navigator.clipboard.writeText(link);
@@ -256,5 +360,6 @@ export function mountInvoice(el: HTMLElement, params: Record<string, string>): (
   }
   return () => {
     alive = false;
+    stopChain();
   };
 }

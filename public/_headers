@@ -3,4 +3,12 @@
   Referrer-Policy: no-referrer
   X-Frame-Options: DENY
   Permissions-Policy: camera=(), microphone=(), geolocation=()
-  Content-Security-Policy: default-src 'self'; connect-src 'self' https://h4n.app https://mw.rpc.fastnear.com https://free.rpc.fastnear.com; frame-src https://hot-labs.org; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
+
+# The HTML's Content-Security-Policy carries a per-request nonce, so functions/_middleware.ts sets it
+# (policy in server/csp.ts). Static files are served without Functions (public/_routes.json); this policy
+# only matters if one is opened directly, e.g. an SVG.
+/assets/*
+  Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'
+
+/img/*
+  Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'

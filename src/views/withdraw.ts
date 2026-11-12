@@ -4,7 +4,9 @@ import { baseUnits } from "../../shared/units.ts";
 import { api, postJson } from "../api.ts";
 import { registerKey, signAndSubmit } from "../sign-flow.ts";
 import { countdown, emptyBalanceHtml, msg, routeHtml } from "./transfer-ui.ts";
-import { NEAR_WALLETS, walletConnected, type NearWalletId, type Session } from "../wallet/index.ts";
+import type { Session } from "../wallet/index.ts";
+import { comboboxHtml, wireCombobox, type ComboItem, type ComboOptions } from "../ui/combobox.ts";
+import { walletPickHtml, wireWalletPick } from "../ui/wallet-pick.ts";
 
 type Balance = { tokenId: string; symbol: string; blockchain: string; decimals: number; amount: string; formatted: string };
 type Token = { assetId: string; symbol: string; blockchain: string; decimals: number };
@@ -21,6 +23,15 @@ const CHAINS: Record<string, string> = {
   avax: "Avalanche", gnosis: "Gnosis", sol: "Solana", btc: "Bitcoin", tron: "Tron",
 };
 export const chainName = (c: string) => (CHAINS[c] ? `${CHAINS[c]} (${c})` : c);
+
+/** Combobox row for a token: chain shown by name, chain code kept searchable ("arb"). */
+export const tokenItem = (t: { assetId: string; symbol: string; blockchain: string }): ComboItem => ({
+  value: t.assetId, symbol: t.symbol, chain: CHAINS[t.blockchain] ?? t.blockchain, keywords: t.blockchain,
+});
+/** Combobox row for a balance, with the amount held in the right-hand slot. */
+export const balanceItem = (b: { tokenId: string; symbol: string; blockchain: string; formatted: string }): ComboItem => ({
+  value: b.tokenId, symbol: b.symbol, chain: CHAINS[b.blockchain] ?? b.blockchain, keywords: b.blockchain, meta: b.formatted,
+});
 
 const EVM_TX = /^0x[0-9a-fA-F]{64}$/;
 const EXPLORERS: Record<string, [RegExp, string]> = {
@@ -54,7 +65,6 @@ const STATUS_TEXT: Record<string, string> = {
 };
 const TERMINAL = new Set(["SUCCESS", "REFUNDED", "FAILED"]);
 const POLL_MS = 5_000;
-const tokenLabel = (t: { symbol: string; blockchain: string }) => `${t.symbol} · ${chainName(t.blockchain)}`;
 
 type Step =
   | { kind: "form" }
@@ -74,8 +84,7 @@ export function mountWithdraw(el: HTMLElement): () => void {
   let error = "";
   let busy = "";
   let step: Step = { kind: "form" };
-  const form = { origin: "", amount: "", search: "", dest: "", recipient: "" };
-  let nearWallet: NearWalletId = "meteor-wallet";
+  const form = { origin: "", amount: "", dest: "", recipient: "" };
 
   const q = <T extends HTMLElement>(s: string) => el.querySelector<T>(s);
   const balanceOf = (id: string) => balances.find((b) => b.tokenId === id);
@@ -85,7 +94,7 @@ export function mountWithdraw(el: HTMLElement): () => void {
 
   function draw() {
     window.clearInterval(tick);
-    const head = `<div class="heading"><div><p class="eyebrow">MOVE FUNDS</p><h1>Withdraw</h1><p class="muted">Send funds from your NEAR Intents balance to any supported chain or exchange address. You sign every withdrawal in your wallet.</p></div></div>`;
+    const head = `<div class="heading"><div><p class="eyebrow">Move funds</p><h1>Withdraw</h1><p class="muted">Send funds from your NEAR Intents balance to any supported chain or exchange address. You sign every withdrawal in your wallet.</p></div></div>`;
     let body: string;
     if (loadError) body = `<section class="panel"><p class="error" role="alert">${esc(loadError)}</p></section>`;
     else if (step.kind === "form") body = formHtml();
@@ -96,24 +105,34 @@ export function mountWithdraw(el: HTMLElement): () => void {
     wire();
   }
 
+  const originBox = (): ComboOptions => ({
+    id: "wd-origin", label: "From your balance", items: balances.map(balanceItem), value: form.origin, placeholder: "Choose a balance",
+    onChange: (v) => {
+      form.origin = v;
+      form.amount = "";
+      draw();
+    },
+  });
+  const destBox = (): ComboOptions => ({
+    id: "wd-dest", label: "Receive as", items: tokens.filter((t) => supportedChain(t.blockchain)).map(tokenItem), value: form.dest, placeholder: "Search token or chain, e.g. USDC or arb",
+    onChange: (v) => {
+      form.dest = v;
+      draw();
+    },
+  });
+
   function formHtml(): string {
     const b = balanceOf(form.origin);
-    const s = form.search.trim().toLowerCase();
-    const dests = tokens.filter((t) => supportedChain(t.blockchain) && (!s || tokenLabel(t).toLowerCase().includes(s) || t.blockchain.includes(s)));
     const d = tokenOf(form.dest);
     if (!balances.length)
       return emptyBalanceHtml("Nothing to withdraw yet");
     return `<section class="panel"><form id="wd-form" novalidate>
-<label>From your balance<select id="wd-origin"><option value="">Choose a balance</option>${balances
-      .map((x) => `<option value="${esc(x.tokenId)}" ${x.tokenId === form.origin ? "selected" : ""}>${esc(x.formatted)} ${esc(x.symbol)} (${esc(chainName(x.blockchain))})</option>`)
-      .join("")}</select></label>
+${comboboxHtml(originBox())}
 <label>Amount${b ? ` (${esc(b.symbol)})` : ""}<span class="amountrow"><input id="wd-amount" inputmode="decimal" autocomplete="off" value="${esc(form.amount)}" ${b ? "" : "disabled"}><button class="textbutton" type="button" id="wd-max" ${b ? "" : "disabled"}>Max</button></span></label>
 ${b ? `<p class="fine">Available: ${esc(b.formatted)} ${esc(b.symbol)}</p>` : ""}
-<label>Search destination token or chain<input id="wd-search" autocomplete="off" placeholder="e.g. USDC or arb" value="${esc(form.search)}"></label>
-<label>Receive as<select id="wd-dest" size="6">${dests
-      .map((t) => `<option value="${esc(t.assetId)}" ${t.assetId === form.dest ? "selected" : ""}>${esc(tokenLabel(t))}</option>`)
-      .join("")}</select></label>
+${comboboxHtml(destBox())}
 <label>${d ? `Destination address on ${esc(chainName(d.blockchain))}` : "Destination address"}<input id="wd-recipient" autocomplete="off" spellcheck="false" value="${esc(form.recipient)}"></label>
+${d ? walletPickHtml({ inputId: "wd-recipient", chain: d.blockchain }) : ""}
 <p class="fine">Exchange deposit address or your wallet; check the network matches.</p>
 <p class="error" id="wd-error" role="alert">${esc(error)}</p>
 <button class="primary" type="submit" ${busy ? "disabled" : ""}>${busy ? esc(busy) : "Review withdrawal"}</button></form></section>`;
@@ -122,16 +141,14 @@ ${b ? `<p class="fine">Available: ${esc(b.formatted)} ${esc(b.symbol)}</p>` : ""
   function reviewHtml(qt: Quote, confirmed: boolean): string {
     const w = qt.withdrawal;
     const chain = chainName(w.destinationBlockchain);
-    const needsNearWallet = session?.kind === "near" && !walletConnected(session);
     return `<section class="panel" id="wd-review"><div class="section-title"><h2>Review withdrawal</h2><span class="muted">Quote expires in <span id="wd-countdown">${countdown(qt.deadline)}</span></span></div>
 ${routeHtml([{ symbol: w.originSymbol, where: "NEAR Intents" }, { symbol: w.destinationSymbol, where: chain }])}
-<div class="pay-field"><span class="eyebrow">NETWORK</span><strong id="wd-network">${esc(chain)}</strong></div>
-<div class="pay-field"><span class="eyebrow">DESTINATION ADDRESS</span><code id="wd-address">${esc(w.recipient)}</code></div>
+<div class="pay-field"><span class="eyebrow">Network</span><strong id="wd-network">${esc(chain)}</strong></div>
+<div class="pay-field"><span class="eyebrow">Destination address</span><code id="wd-address">${esc(w.recipient)}</code></div>
 <p class="invoice-total"><span>You send</span><strong id="wd-send">${esc(w.amountFormatted)} ${esc(w.originSymbol)}</strong></p>
 <p class="invoice-total"><span>You receive</span><strong id="wd-receive">≈ ${esc(w.amountOutFormatted)} ${esc(w.destinationSymbol)}</strong></p>
 <p class="fine" id="wd-min">Minimum received: ${esc(w.minAmountOutFormatted)} ${esc(w.destinationSymbol)} on ${esc(chain)}. Funds sent to a wrong address or network usually cannot be recovered.</p>
 <label class="radio"><input type="checkbox" id="wd-confirm" ${confirmed ? "checked" : ""}> I confirm this address is on ${esc(chain)}</label>
-${needsNearWallet ? `<label>Wallet<select id="wd-wallet">${NEAR_WALLETS.map((x) => `<option value="${x.id}" ${x.id === nearWallet ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select></label>` : ""}
 <p class="error" id="wd-error" role="alert">${esc(error)}</p>
 <div class="invoice-actions"><button class="textbutton" type="button" id="wd-back" ${busy ? "disabled" : ""}>Back</button><button class="primary" type="button" id="wd-sign" ${confirmed && !busy ? "" : "disabled"}>${busy ? esc(busy) : "Sign in wallet"}</button></div></section>`;
   }
@@ -158,7 +175,7 @@ ${TERMINAL.has(w.status) ? `<button class="primary" type="button" id="wd-new">Ne
 
   function historyHtml(): string {
     if (!history.length) return "";
-    return `<section class="panel" aria-labelledby="wd-history-title"><p class="eyebrow" id="wd-history-title">WITHDRAWAL HISTORY</p><div class="payment-list" id="wd-history">${history
+    return `<section class="panel" aria-labelledby="wd-history-title"><p class="eyebrow" id="wd-history-title">Withdrawal history</p><div class="payment-list" id="wd-history">${history
       .map(
         (w) =>
           `<div class="payment-row"><span>${esc(new Date(w.createdAt).toLocaleString())}</span><span>${esc(w.amountFormatted)} ${esc(w.originSymbol)} → ${esc(w.destinationSymbol)} (${esc(chainName(w.destinationBlockchain))})</span><code title="${esc(w.recipient)}">${esc(w.recipient.length > 20 ? `${w.recipient.slice(0, 8)}…${w.recipient.slice(-6)}` : w.recipient)}</code><span class="pill">${esc(STATUS_TEXT[w.status] ?? w.status)}</span>${w.status === "SUCCESS" ? explorerLinks(w.destinationBlockchain, w.destinationTxHashes) : ""}</div>`,
@@ -188,31 +205,17 @@ ${TERMINAL.has(w.status) ? `<button class="primary" type="button" id="wd-new">Ne
   function wireForm() {
     const f = q<HTMLFormElement>("#wd-form");
     if (!f) return;
-    q<HTMLSelectElement>("#wd-origin")!.onchange = (e) => {
-      form.origin = (e.target as HTMLSelectElement).value;
-      form.amount = "";
-      draw();
-    };
+    wireCombobox(el, originBox());
+    wireCombobox(el, destBox());
     q<HTMLInputElement>("#wd-amount")!.oninput = (e) => (form.amount = (e.target as HTMLInputElement).value.trim());
     q<HTMLButtonElement>("#wd-max")!.onclick = () => {
       const b = balanceOf(form.origin);
       if (b) form.amount = b.formatted;
       draw();
     };
-    const search = q<HTMLInputElement>("#wd-search")!;
-    search.oninput = () => {
-      form.search = search.value;
-      const pos = search.selectionStart;
-      draw();
-      const s = q<HTMLInputElement>("#wd-search")!;
-      s.focus();
-      s.setSelectionRange(pos, pos);
-    };
-    q<HTMLSelectElement>("#wd-dest")!.onchange = (e) => {
-      form.dest = (e.target as HTMLSelectElement).value;
-      draw();
-    };
     q<HTMLInputElement>("#wd-recipient")!.oninput = (e) => (form.recipient = (e.target as HTMLInputElement).value);
+    const d = tokenOf(form.dest);
+    if (d) wireWalletPick(f, { inputId: "wd-recipient", chain: d.blockchain });
     f.onsubmit = (e) => {
       e.preventDefault();
       void requestQuote();
@@ -263,8 +266,6 @@ ${TERMINAL.has(w.status) ? `<button class="primary" type="button" id="wd-new">Ne
       s.confirmed = box.checked;
       q<HTMLButtonElement>("#wd-sign")!.disabled = !box.checked || !!busy;
     };
-    const wsel = q<HTMLSelectElement>("#wd-wallet");
-    if (wsel) wsel.onchange = () => (nearWallet = wsel.value as NearWalletId);
     q<HTMLButtonElement>("#wd-back")!.onclick = () => {
       step = { kind: "form" };
       error = "";
@@ -315,7 +316,6 @@ ${TERMINAL.has(w.status) ? `<button class="primary" type="button" id="wd-new">Ne
           draw();
         },
         {
-          nearWallet,
           // Pause on the registration screen until the key is registered (or the user cancels).
           confirmKeyRegistration: (publicKey) =>
             new Promise<void>((resolve, reject) => {

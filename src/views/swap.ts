@@ -2,9 +2,10 @@ import { escapeHTML as esc } from "../../shared/text.ts";
 import { baseUnits } from "../../shared/units.ts";
 import { api, postJson } from "../api.ts";
 import { registerKey, signAndSubmit, type TransferView } from "../sign-flow.ts";
-import { NEAR_WALLETS, walletConnected, type NearWalletId, type Session } from "../wallet/index.ts";
+import type { Session } from "../wallet/index.ts";
 import { countdown, emptyBalanceHtml, msg, routeHtml } from "./transfer-ui.ts";
-import { chainName } from "./withdraw.ts";
+import { comboboxHtml, wireCombobox, type ComboOptions } from "../ui/combobox.ts";
+import { balanceItem, tokenItem } from "./withdraw.ts";
 
 type Balance = { tokenId: string; symbol: string; blockchain: string; decimals: number; amount: string; formatted: string };
 type Token = { assetId: string; symbol: string; blockchain: string; decimals: number; price?: number };
@@ -18,8 +19,6 @@ type Step =
 const SLIPPAGES = [[50, "0.5 %"], [100, "1 %"], [300, "3 %"]] as const;
 const TERMINAL = new Set(["SUCCESS", "REFUNDED", "FAILED"]);
 const POLL_MS = 5_000;
-const MAX_OPTIONS = 100;
-const tokenLabel = (t: { symbol: string; blockchain: string }) => `${t.symbol} · ${chainName(t.blockchain)}`;
 
 /** `amountOut` per 1 unit of the origin token, from base units, with 6 fractional digits (truncated). */
 export function swapRate(amountIn: bigint, originDecimals: number, amountOut: bigint, destDecimals: number): string {
@@ -54,8 +53,7 @@ export function mountSwap(el: HTMLElement): () => void {
   let error = "";
   let busy = "";
   let step: Step = { kind: "form" };
-  const form = { origin: "", amount: "", search: "", dest: "", slippage: 100 };
-  let nearWallet: NearWalletId = "meteor-wallet";
+  const form = { origin: "", amount: "", dest: "", slippage: 100 };
 
   const q = <T extends HTMLElement>(s: string) => el.querySelector<T>(s);
   const balanceOf = (id: string) => balances.find((b) => b.tokenId === id);
@@ -65,7 +63,7 @@ export function mountSwap(el: HTMLElement): () => void {
 
   function draw() {
     window.clearInterval(tick);
-    const head = `<div class="heading"><div><p class="eyebrow">MOVE FUNDS</p><h1>Swap</h1><p class="muted">Swap one balance for another token. The swapped tokens stay in your NEAR Intents account. You sign every swap in your wallet.</p></div></div>`;
+    const head = `<div class="heading"><div><p class="eyebrow">Move funds</p><h1>Swap</h1><p class="muted">Swap one balance for another token. The swapped tokens stay in your NEAR Intents account. You sign every swap in your wallet.</p></div></div>`;
     let body: string;
     if (loadError) body = `<section class="panel"><p class="error" role="alert">${esc(loadError)}</p></section>`;
     else if (step.kind === "form") body = formHtml();
@@ -76,32 +74,32 @@ export function mountSwap(el: HTMLElement): () => void {
     wire();
   }
 
-  /** Destination options under the current search. A selected destination that is not among them is cleared,
-   * so a quote can never go out for a token the user cannot see. */
-  function destOptions(): { matches: Token[]; shown: Token[] } {
-    const s = form.search.trim().toLowerCase();
-    const matches = tokens.filter((t) => t.assetId !== form.origin && (!s || tokenLabel(t).toLowerCase().includes(s) || t.blockchain.includes(s)));
-    const shown = matches.slice(0, MAX_OPTIONS);
-    if (form.dest && !shown.some((t) => t.assetId === form.dest)) form.dest = "";
-    return { matches, shown };
-  }
+  const originBox = (): ComboOptions => ({
+    id: "sw-origin", label: "From your balance", items: balances.map(balanceItem), value: form.origin, placeholder: "Choose a balance",
+    onChange: (v) => {
+      form.origin = v;
+      form.amount = "";
+      if (form.dest === form.origin) form.dest = "";
+      draw();
+    },
+  });
+  /** The origin token is never offered as a destination. The choice persists while the user filters; the
+   * input always shows the committed token once the list closes, so a quote never goes out for a hidden choice. */
+  const destBox = (): ComboOptions => ({
+    id: "sw-dest", label: "Swap to", items: tokens.filter((t) => t.assetId !== form.origin).map(tokenItem), value: form.dest,
+    placeholder: "Search token or chain, e.g. wNEAR or arb",
+    onChange: (v) => (form.dest = v),
+  });
 
   function formHtml(): string {
     if (!balances.length)
       return emptyBalanceHtml("Nothing to swap yet");
     const b = balanceOf(form.origin);
-    const { matches, shown } = destOptions();
     return `<section class="panel"><form id="sw-form" novalidate>
-<label>From your balance<select id="sw-origin"><option value="">Choose a balance</option>${balances
-      .map((x) => `<option value="${esc(x.tokenId)}" ${x.tokenId === form.origin ? "selected" : ""}>${esc(x.formatted)} ${esc(x.symbol)} (${esc(chainName(x.blockchain))})</option>`)
-      .join("")}</select></label>
+${comboboxHtml(originBox())}
 <label>Amount${b ? ` (${esc(b.symbol)})` : ""}<span class="amountrow"><input id="sw-amount" inputmode="decimal" autocomplete="off" value="${esc(form.amount)}" ${b ? "" : "disabled"}><button class="textbutton" type="button" id="sw-max" ${b ? "" : "disabled"}>Max</button></span></label>
 ${b ? `<p class="fine">Available: ${esc(b.formatted)} ${esc(b.symbol)}</p>` : ""}
-<label>Search token or chain to receive<input id="sw-search" autocomplete="off" placeholder="e.g. wNEAR or arb" value="${esc(form.search)}"></label>
-<label>Swap to<select id="sw-dest" size="6">${shown
-      .map((t) => `<option value="${esc(t.assetId)}" ${t.assetId === form.dest ? "selected" : ""}>${esc(tokenLabel(t))}</option>`)
-      .join("")}</select></label>
-${matches.length > shown.length ? `<p class="fine">Showing the first ${MAX_OPTIONS} matches. Type to narrow the list.</p>` : ""}
+${comboboxHtml(destBox())}
 <fieldset class="slippage"><legend>Slippage tolerance</legend>${SLIPPAGES.map(
       ([bps, label]) => `<label class="radio"><input type="radio" name="sw-slip" value="${bps}" ${form.slippage === bps ? "checked" : ""}> ${label}</label>`,
     ).join("")}</fieldset>
@@ -115,7 +113,6 @@ ${matches.length > shown.length ? `<p class="fine">Showing the first ${MAX_OPTIO
     const d = tokenOf(t.destinationAsset);
     const ob = balanceOf(t.originAsset);
     const od = ob?.decimals ?? o?.decimals;
-    const needsNearWallet = session?.kind === "near" && !walletConnected(session);
     const usd = (units: string, dec: number | undefined, price: number | undefined) => {
       const v = dec === undefined ? undefined : usdValue(BigInt(units), dec, price);
       return v ? ` <small class="muted">≈ $${esc(v)} reference price</small>` : "";
@@ -128,7 +125,6 @@ ${routeHtml([{ symbol: t.originSymbol, where: "NEAR Intents" }, { symbol: t.dest
 <p class="fine" id="sw-min">Minimum received: ${esc(t.minAmountOutFormatted)} ${esc(t.destinationSymbol)}. If the price moves further than your slippage, the swap is refunded to your NEAR Intents balance.</p>
 ${rate}
 <p class="fine">The swapped tokens stay in your NEAR Intents account.</p>
-${needsNearWallet ? `<label>Wallet<select id="sw-wallet">${NEAR_WALLETS.map((x) => `<option value="${x.id}" ${x.id === nearWallet ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select></label>` : ""}
 <p class="error" id="sw-error" role="alert">${esc(error)}</p>
 <div class="invoice-actions"><button class="textbutton" type="button" id="sw-back" ${busy ? "disabled" : ""}>Back</button><button class="primary" type="button" id="sw-sign" ${busy ? "disabled" : ""}>${busy ? esc(busy) : "Sign in wallet"}</button></div></section>`;
   }
@@ -176,28 +172,14 @@ ${TERMINAL.has(t.status) ? `<button class="primary" type="button" id="sw-new">Ne
   function wireForm() {
     const f = q<HTMLFormElement>("#sw-form");
     if (!f) return;
-    q<HTMLSelectElement>("#sw-origin")!.onchange = (e) => {
-      form.origin = (e.target as HTMLSelectElement).value;
-      form.amount = "";
-      if (form.dest === form.origin) form.dest = "";
-      draw();
-    };
+    wireCombobox(el, originBox());
+    wireCombobox(el, destBox());
     q<HTMLInputElement>("#sw-amount")!.oninput = (e) => (form.amount = (e.target as HTMLInputElement).value.trim());
     q<HTMLButtonElement>("#sw-max")!.onclick = () => {
       const b = balanceOf(form.origin);
       if (b) form.amount = b.formatted;
       draw();
     };
-    const search = q<HTMLInputElement>("#sw-search")!;
-    search.oninput = () => {
-      form.search = search.value;
-      const pos = search.selectionStart;
-      draw();
-      const s = q<HTMLInputElement>("#sw-search")!;
-      s.focus();
-      s.setSelectionRange(pos, pos);
-    };
-    q<HTMLSelectElement>("#sw-dest")!.onchange = (e) => (form.dest = (e.target as HTMLSelectElement).value);
     el.querySelectorAll<HTMLInputElement>('input[name="sw-slip"]').forEach((r) => (r.onchange = () => (form.slippage = Number(r.value))));
     f.onsubmit = (e) => {
       e.preventDefault();
@@ -244,8 +226,6 @@ ${TERMINAL.has(t.status) ? `<button class="primary" type="button" id="sw-new">Ne
         draw();
       }
     }, 1000);
-    const wsel = q<HTMLSelectElement>("#sw-wallet");
-    if (wsel) wsel.onchange = () => (nearWallet = wsel.value as NearWalletId);
     q<HTMLButtonElement>("#sw-back")!.onclick = () => {
       step = { kind: "form" };
       error = "";
@@ -293,7 +273,6 @@ ${TERMINAL.has(t.status) ? `<button class="primary" type="button" id="sw-new">Ne
           draw();
         },
         {
-          nearWallet,
           confirmKeyRegistration: (publicKey) =>
             new Promise<void>((resolve, reject) => {
               busy = "";

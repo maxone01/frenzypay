@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { pickToken } from "./helpers/combobox.ts";
 
 const ADDR = "0xabcdef0123456789abcdef0123456789abcdef01";
 const USDC = "nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1";
@@ -105,7 +106,8 @@ test("new manual bill: token, address with network hint, amount the vendor recei
   await page.locator("#bill-vendor").fill("Hosting Ltd");
   await page.locator("#bill-reference").fill("H-9");
   await page.locator("#bill-due").fill(day(10));
-  await page.locator("#bill-dest").selectOption(ARB_USDC);
+  await pickToken(page, "bill-dest", "arb", "USDC, Arbitrum");
+  await expect(page.locator("#bill-dest")).toHaveAttribute("data-value", ARB_USDC);
   await expect(page.locator("#bill-network-hint")).toContainText("Enter an address on Arbitrum (arb)");
   await page.locator("#bill-recipient").fill("0x2222222222222222222222222222222222222222");
   await page.locator("#bill-amount").fill("2.1234567");

@@ -1,8 +1,8 @@
 # FrenzyPay
 
-Non-custodial invoicing and treasury on [NEAR Intents](https://near-intents.org). A business invoices in USDC or USDT, the client pays with any supported token on any chain, the money lands in the business's **own** `intents.near` balance, and from there the business swaps, pays vendor bills, runs payroll and withdraws to any chain or exchange address, signing every outbound transfer in its wallet. A treasury agent suggests actions from rules the owner signs, within spending limits and a recipient whitelist. FrenzyPay never holds keys or funds.
+Non-custodial invoicing and treasury on [NEAR Intents](https://near-intents.org). A business invoices in USDC or USDT, the client pays with any supported token on any chain, the money lands in the business's **own** `intents.near` balance, and from there the business swaps, pays vendor bills, runs payroll and withdraws to any chain or exchange address, signing every outbound transfer in its wallet. FrenzyPay never holds keys or funds.
 
-Built at **NEAR HACKATHON** for **Track 08 Real-World Money** (primary), with **04 Autonomous Business** and **06 AI Security & Defense** (see [Tracks](#tracks)). Submission text, demo script and checklist: [docs/SUBMISSION.md](docs/SUBMISSION.md).
+Built at **NEAR HACKATHON** for **Track 08 Real-World Money** (see [Tracks](#tracks)). Submission text, demo script and checklist: [docs/SUBMISSION.md](docs/SUBMISSION.md).
 
 ## For judges
 
@@ -24,26 +24,22 @@ Open **http://127.0.0.1:24011** (the app and the API share that origin; `curl ht
 1. **Sign in**: "Connect EVM wallet" (MetaMask or any injected browser wallet; it signs a message, no transaction, no gas) or "Connect NEAR wallet" (Meteor or HOT).
 2. **Invoices → New invoice**: fill the client and a line item, **Save draft**, **Issue invoice**, **Copy payment link** and open it (`#/pay/<publicId>`) in another window: the payer picks any token on any chain and gets a 1Click deposit address and exact amount.
 3. **Home**: Intents balance, receivables, payables, this month and activity. **Swap**, **Bills**, **Payroll** and **Withdraw** each end in a review and a wallet signature.
-4. **Agent** (sidebar, or More on mobile): tick "Suggest converting other tokens", set limits, **Save rules** — the exact policy message is shown, sign it. Suggestions for your balance appear in the inbox; **Approve** shows the quote; **Sign in wallet** executes it. Without NEAR AI the page says "AI features are not configured" and everything else works.
 
 What needs what:
 
 | Works | Needs |
 |---|---|
 | Sign-in with an EVM wallet, invoices (create, edit, issue, cancel) | Nothing beyond `SESSION_SECRET` |
-| NEAR wallet sign-in (key check), balances, agent rules, spending limits and whitelist (signed; the forms and checks use the 1Click token list and NEAR RPC balances), agent suggestions, token lists, pay-page quotes, swap/bill/payroll/withdraw quotes | Network access to the public 1Click API and NEAR mainnet RPC (no key needed; without `ONECLICK_API_KEY` 1Click adds a 0.25 % fee) |
-| "Describe your rules" and "AI summary" | `NEAR_AI_API_KEY` (NEAR AI Cloud); hidden without it |
+| NEAR wallet sign-in (key check), balances, token lists, pay-page quotes, swap/bill/payroll/withdraw quotes | Network access to the public 1Click API and NEAR mainnet RPC (no key needed; without `ONECLICK_API_KEY` 1Click adds a 0.25 % fee) |
 | Actually moving funds | A funded `intents.near` balance on mainnet (there is no testnet) |
 
-To check behaviour without a wallet or funds, run the test suites (see [Tests](#tests)): the browser tests drive every flow, including the agent loop, against a fake `/api`.
+To check behaviour without a wallet or funds, run the test suites (see [Tests](#tests)): the browser tests drive every flow against a fake `/api`.
 
 ## Tracks
 
-- **08 Real-World Money (primary)**: invoices, multichain payment into a non-custodial balance, verified reconciliation, bill pay, payroll and withdrawals (`server/invoices.ts`, `server/payments.ts`, `server/reconcile.ts`, `server/bills.ts`, `server/payroll.ts`, `server/transfers.ts`).
-- **04 Autonomous Business**: a deterministic agent turns signed rules into suggestions (convert, sweep, pay bill, follow up an overdue invoice); approving one is a single wallet signature (`server/agent.ts`, `server/agent-actions.ts`).
-- **06 AI Security & Defense**: per-transaction and rolling 24-hour spending limits, a recipient whitelist and signed policy changes, enforced by the transfer engine on every outbound transfer; NEAR AI output goes through the same strict validator as a manual edit and is never saved without a signature (`server/policy.ts`, `server/nearai.ts`).
+- **08 Real-World Money**: invoices, multichain payment into a non-custodial balance, verified reconciliation, bill pay, payroll and withdrawals (`server/invoices.ts`, `server/payments.ts`, `server/reconcile.ts`, `server/bills.ts`, `server/payroll.ts`, `server/transfers.ts`).
 
-Design: [docs/superpowers/specs/2026-10-29-frenzypay-design.md](docs/superpowers/specs/2026-10-29-frenzypay-design.md). Verified NEAR Intents facts: [docs/NEAR-INTENTS.md](docs/NEAR-INTENTS.md). NEAR AI Cloud facts: [docs/NEAR-AI.md](docs/NEAR-AI.md). Invoice and bill-pay reconciliation rules: [docs/INVOICING.md](docs/INVOICING.md).
+Design: [docs/superpowers/specs/2026-10-29-frenzypay-design.md](docs/superpowers/specs/2026-10-29-frenzypay-design.md). Verified NEAR Intents facts: [docs/NEAR-INTENTS.md](docs/NEAR-INTENTS.md). Invoice and bill-pay reconciliation rules: [docs/INVOICING.md](docs/INVOICING.md).
 
 ## What it does
 
@@ -55,7 +51,6 @@ Design: [docs/superpowers/specs/2026-10-29-frenzypay-design.md](docs/superpowers
 6. **Treasury dashboard** on Home: cash, receivables, payables, this month's flows and one activity feed (see [Treasury dashboard](#treasury-dashboard)).
 7. **Pay vendor bills** from the balance, entered by hand or imported from a FrenzyPay invoice link (see [Bill pay](#bill-pay)).
 8. **Run payroll / batch payouts** from a CSV or saved payees, one signed intent per line (see [Payroll](#payroll-and-batch-payouts)).
-9. **Treasury agent**: signed rules, spending limits and a whitelist; the agent suggests and the owner approves each suggestion with one signature (see [Agent](#agent)).
 
 Every outbound transfer (withdraw, swap, bill, payroll line) goes through one engine, `server/transfers.ts`: the server asks 1Click for a quote and an unsigned intent (`generate-intent`), checks it field by field and stores it; the browser has the owner sign that exact payload in their wallet (`src/sign-flow.ts`); the server relays the signature only if it covers the stored payload, the row is still awaiting a signature and the quote is unexpired. The origin token must be in the owner's own balance and the amount the intent moves must fit that balance at quote time (otherwise 400 "Amount exceeds your balance").
 
@@ -109,17 +104,6 @@ Limits: 50 lines per payout, 64 KB per CSV, 500 saved payees per owner.
 
 Batch status is derived per line ("3/5 sent, 1 failed, 1 awaiting"). A line that may have moved funds is never quoted again: sent and in-flight lines are locked, and an expired quote whose relay failed stays "checking" until a 1Click status read after a grace period shows nothing landed. "Send all" sends only lines never sent and open unsigned quotes; a failed, refunded or expired line is retried only with its own Retry button.
 
-### Agent
-
-`#/agent` (`src/views/agent.ts`, `server/policy.ts`, `server/agent.ts`, `server/agent-actions.ts`, `server/nearai.ts`). The agent suggests; it never signs and never moves funds.
-
-- **Rules** (`Policy` in `server/policy.ts`): *convert* other tokens worth at least a USD minimum to USDC or USDT (only tokens with a reference price); *sweep* the balance of one token above a threshold to a whitelisted address, keeping a set amount; *reminders* for bills due within N days (0–30) and invoices overdue by N days (0–90); *spending limits*.
-- **Every policy or whitelist change is signed.** Saving shows the exact message — `FrenzyPay policy v1`, account, the SHA-256 of the canonical JSON of the change, nonce — and the wallet signs it (NEP-413 or ERC-191, verified like sign-in). Each challenge is single-use and expires in 5 minutes; a signature over a different change is refused with 401 "Signature does not match this change".
-- **Spending limits** are enforced by the transfer engine (`enforceLimits`, called from `server/transfers.ts`) on every withdrawal, bill and payroll line, not on swaps inside your own account: a per-transaction cap and a rolling 24-hour cap per origin token on the amount that leaves the balance (for `EXACT_OUTPUT` the quoted amount in), counting transfers awaiting a signature, processing or successful in the last 24 hours, re-checked when the signed intent is submitted. Only a swap delivered into your own Intents account is exempt; a swap-kind transfer to any other recipient or chain is limited. Errors: "This exceeds your per-transaction limit", "This exceeds your 24-hour limit". With **Whitelisted recipients only**, withdrawals, manual bills and payroll lines to an address that is not on your whitelist fail with "Recipient is not on your whitelist" (a bill imported from a FrenzyPay invoice pays the verified invoice owner and is subject to the caps only). The whitelist holds one entry per token and recipient address, whatever the recipient type (Intents account or destination chain): adding the same token and address again with the other type is refused with "That address is already on your whitelist."
-- **Suggestions** (`evaluate` in `server/agent.ts`, a pure function of rules, balances, bills, invoices and whitelist) are computed when you open Home or the Agent page (`GET /api/agent/proposals`, at most once a minute per owner unless forced). The same suggestion is never listed twice; one whose basis changed (balance moved, bill or invoice paid, whitelist entry removed) is expired instead of executed. A sweep never suggests more than the per-transaction cap for that token (the reason then says "limited by your per-transaction cap"); the rest comes in later suggestions. A dismissed suggestion is not suggested again with the same parameters; an approved invoice follow-up is not suggested again for 7 days.
-- **Approve** re-evaluates with fresh data, then requests a normal quote: convert → in-account swap (1 % slippage); sweep → withdrawal to the whitelisted address; pay bill → the bill's quote; follow-up → the invoice's pay link. You review and sign it exactly like a manual transfer, and the engine re-checks balance and limits. **Dismiss** hides a suggestion.
-- **AI (optional, NEAR AI Cloud).** "Describe your rules" sends your text (max 1000 characters), your whitelist ids and labels — never addresses —, your saved policy and the id, symbol and decimals of the tokens you hold to the model, which returns only the sections you asked to change; the reply is parsed by the same strict `parsePolicy` as a manual edit and merged section by section over your saved rules (a section the draft omits keeps its saved value) in the Rules form for review. Before you sign, the signing step lists the changed sections and warns about anything that loosens a saved rule ("⚠ Loosens your spending limits" for a removed or raised cap, removed limits or whitelist-only turned off; "⚠ Keeps less in your account after a sweep"). It is saved only when you sign it; **Discard draft** puts the saved rules back. At most 5 drafting calls per owner per minute (then 429 "Too many AI requests — try again in a minute"). The **AI summary** is 2–4 sentences from totals and token symbols only (no names, notes, addresses or ids), capped at 600 characters, shown as escaped text and cached 10 minutes. AI output never becomes an amount, token id, address or proposal parameter. AI errors (bad key, no credits, rate limit, timeout) show "AI is unavailable right now" and do not affect rules or suggestions.
-
 ## Architecture
 
 ```
@@ -131,26 +115,57 @@ Cloudflare Pages Functions  /api/*   (functions/, server/)
    |   transfers.ts                                one outbound engine: withdraw | swap | bill | payroll
    |     withdraw.ts, swaps.ts, bills.ts, payroll.ts   thin domain modules over it
    |   activity.ts, balances.ts                    dashboard feed and Intents balances
-   |   policy.ts, agent.ts, agent-actions.ts       signed rules, limits, whitelist; suggestions; approve → quote
    |-- 1Click API  (tokens, quotes, generate-intent, submit signed intent, status)   ONECLICK_BASE_URL, optional ONECLICK_API_KEY
    |-- NEAR RPC    (read intents.near balances, key checks)                          NEAR_RPC_URL
-   |-- NEAR AI Cloud (optional: rule drafts, summary; nearai.ts)                     NEAR_AI_API_KEY, NEAR_AI_MODEL, NEAR_AI_BASE_URL
-   '-- D1 (SQLite) (sign-in and policy challenges, invoices, payment attempts, transfers, bills, payees, payroll
-                    batches, policies, whitelist, proposals, AI cache; sessions are stateless signed cookies)
+   '-- D1 (SQLite) (sign-in challenges, invoices, payment attempts, transfers, bills, payees, payroll
+                    batches; sessions are stateless signed cookies)
 ```
 
-The browser talks only to `/api`; the wallet SDKs (Meteor, HOT, injected EVM) make their own wallet and RPC calls, which the CSP in `public/_headers` allows. Signing happens in the user's wallet; the server only verifies, quotes and relays.
+**Legacy D1 tables.** Migrations `0006_agent.sql`, `0007_agent_summary.sql` and `0008_ai_rate.sql` created `agent_policies`, `whitelist`, `agent_proposals` and `agent_cache` for a treasury agent that has since been removed. The tables stay so existing deployed data is not destroyed; no code reads or writes them. The `challenges.purpose` column they added is still used (always `'login'`).
+
+The browser talks only to `/api`; the NEAR wallets and the injected EVM wallet make their own wallet and RPC calls, which the CSP allows (see below). Signing happens in the user's wallet; the server only verifies, quotes and relays.
+
+### NEAR wallet connection
+
+NEAR wallets connect through [`@hot-labs/near-connect`](https://github.com/azbang/near-connect) (pinned at `0.12.0`), all in `src/wallet/near.ts`:
+
+- **Choosing a wallet.** "Connect NEAR wallet" (sign-in), a NEAR transfer that needs the wallet, and "Connect another NEAR wallet" (destination address chips) open the connector's own wallet modal. The wallet list is **HOT and Meteor**, passed inline from `shared/near-connect-manifest.ts`, plus any NEAR wallet a browser extension injects into the page (that code already runs with full page access through the extension). The library's default manifest is not fetched: it lives on a moving GitHub branch. `src/wallet/near-modal.ts` makes the modal's wallet rows keyboard-focusable buttons; Escape or the backdrop closes it.
+- **Signing.** `signNep413` uses `wallet.signMessage` with the challenge nonce as a plain `Uint8Array` (no Buffer polyfill). `registerIntentsKey` uses `wallet.signAndSendTransaction`: `intents.near` `add_public_key`, 100 Tgas, 1 yoctoNEAR.
+- **Staying connected.** The signing wallet and account are saved in `localStorage` (`frenzypay:near-signer`) and restored on reload without a popup when the wallet still reports that account. A `wallet:signOut` event or app sign-out clears it, and sign-out also signs out of every NEAR wallet connected in the page. Connecting another wallet only for its address never changes who signs.
+- **Debug wallets are off.** The connector's settings screen lets a user paste any wallet manifest, and the connector reloads those on every visit. This app drops that storage key and hides the button.
+
+**Supply-chain risk.** near-connect does not bundle wallet code. When a user picks a wallet, the connector downloads that wallet's executor script at runtime and runs it in a sandboxed iframe (`sandbox="allow-scripts"`, no same-origin access). The executor is the wallet as far as this app is concerned: it receives every message and transaction to sign and can show any UI inside the modal. So:
+
+- Each `executor` URL in `shared/near-connect-manifest.ts` is pinned to a **commit hash**, and the CSP allows those exact paths only. A wallet team pushing to its branch therefore changes nothing here until someone reviews the new script and bumps the hash. Neither the URLs nor the hashes are integrity-checked beyond that, and GitHub serving a different file for a commit would not be detected.
+- The executors themselves talk to wallet backends this app does not control (HOT: `h4n.app`, `api0.herewallet.app`; Meteor: `mc.meteorwallet.app`), and the connector caches executor code in IndexedDB (`hot-connector`). A compromised backend can still mislead the user inside the wallet UI. The app's checks (the server verifies every NEP-413 signature, and `signNep413` refuses a signature from another account) limit what a bad executor can make the app accept, but not what it can ask the user to sign.
+- The sandboxed iframe inherits this page's CSP. That is why the HTML gets a per-request script nonce (below) instead of `'unsafe-inline'`.
+
+To update a wallet, read the new executor at the new commit, then change the hash and `version` in the manifest. If the wallet starts using a new origin, add it to `server/csp.ts`. `tests/server/csp.test.ts` fails if an executor is missing from the CSP or is not pinned to a commit.
+
+### Content-Security-Policy
+
+`functions/_middleware.ts` sets the CSP on every HTML response, using the policy in `server/csp.ts`. It adds a fresh nonce to the page's `<script>` tags and to `script-src` (`'self' 'nonce-…'`; no `'unsafe-inline'`, no `'unsafe-eval'`). The page hands the same nonce to near-connect (`cspNonce`) so the wallet iframe's two inline scripts can run. The HTML is sent `Cache-Control: no-store`, so a nonce is never reused. `public/_routes.json` keeps `/assets/*` and `/img/*` out of Functions; `public/_headers` carries the other security headers and a locked-down CSP for those static files. Origins allowed beyond `'self'`:
+
+| Directive | Origin | Why |
+|---|---|---|
+| `connect-src` | the two pinned executor URLs on `raw.githubusercontent.com` (exact paths) | near-connect fetches the wallet code |
+| `connect-src` | `https://h4n.app`, `https://api0.herewallet.app` | HOT request relay and clock |
+| `connect-src` | `https://mc.meteorwallet.app`, `wss://mc.meteorwallet.app` | Meteor connect bridge |
+| `connect-src` | `https://free.rpc.fastnear.com` | NEAR RPC handed to the wallets (`providers.mainnet`) |
+| `img-src` | `https://storage.herewallet.app` | HOT icon and the logo in HOT's connect screen (Meteor's icon is a `data:` URI) |
+
+No `frame-src` entry is needed: the wallet iframe is a `srcdoc` document, which `frame-src` does not govern. Wallet pop-ups (`window.open` to HOT, Meteor, Telegram or app stores) are not governed by CSP either. `npm run dev` (Vite) serves no CSP at all; `npm run dev:api` (wrangler) runs the middleware.
 
 ### Routes
 
-App (hash routes, `src/main.ts`): `#/` Home, `#/invoices`, `#/invoices/<id>`, `#/bills`, `#/bills/new`, `#/bills/<id>`, `#/swap`, `#/payroll`, `#/payroll/<id>`, `#/withdraw`, `#/agent`, and the public `#/pay/<publicId>` (no sign-in). The desktop sidebar lists every section; the mobile bottom bar shows Home, Invoices, Bills, Swap and More, which opens Payroll, Withdraw, Agent and Sign out.
+App (hash routes, `src/main.ts`): `#/` Home, `#/invoices`, `#/invoices/<id>`, `#/bills`, `#/bills/new`, `#/bills/<id>`, `#/swap`, `#/payroll`, `#/payroll/<id>`, `#/withdraw`, and the public `#/pay/<publicId>` (no sign-in). The desktop sidebar lists every section; the mobile bottom bar shows Home, Invoices, Bills, Swap and More, which opens Payroll, Withdraw and Sign out.
 
 API (`functions/api/`, all owner-scoped behind the session cookie except `public/*`, `auth/*` and `health`):
 
 | Area | Routes |
 |---|---|
 | Session | `POST /api/auth/challenge`, `POST /api/auth/verify`, `POST /api/auth/logout`, `GET /api/me`, `GET /api/health` |
-| Invoices | `GET/POST /api/invoices`, `GET/PUT /api/invoices/:id`, `POST /api/invoices/:id/issue`, `POST /api/invoices/:id/cancel`, `GET /api/invoices/:id/payments` |
+| Invoices | `GET/POST /api/invoices`, `GET/PUT /api/invoices/:id`, `POST /api/invoices/:id/issue`, `POST /api/invoices/:id/cancel`, `GET /api/invoices/:id/payments`, `GET/POST /api/invoices/:id/send` (email status / send or resend the payment link to the stored client email; 5 per invoice and 30 per owner per hour) |
 | Public pay page | `GET /api/public/invoices/:publicId`, `POST …/quote`, `POST …/deposit`, `GET …/status` |
 | Balances, tokens, dashboard | `GET /api/balances`, `GET /api/tokens`, `GET /api/activity` (`?summary=month` for this month's flows) |
 | Transfers (every kind) | `POST /api/transfers/submit`, `GET /api/transfers/:depositAddress` (refresh), `GET /api/transfers?kind=`, `GET /api/transfers/key-status` |
@@ -158,9 +173,7 @@ API (`functions/api/`, all owner-scoped behind the session cookie except `public
 | Swap | `POST /api/swaps/quote` |
 | Bills | `GET/POST /api/bills`, `POST /api/bills/import`, `GET/PUT /api/bills/:id`, `POST /api/bills/:id/quote`, `POST /api/bills/:id/cancel` |
 | Payroll | `GET/POST/DELETE /api/payroll/payees`, `GET/POST /api/payroll/batches`, `GET /api/payroll/batches/:id`, `POST /api/payroll/batches/:id/lines/:n/quote` |
-| Agent | `GET/PUT /api/agent/policy`, `POST /api/agent/policy/challenge`, `GET/POST/DELETE /api/agent/whitelist`, `GET /api/agent/proposals`, `POST /api/agent/proposals/:id/approve`, `POST /api/agent/proposals/:id/dismiss` |
-| Agent AI (optional) | `GET /api/agent/ai-status`, `POST /api/agent/policy/draft`, `GET /api/agent/summary` (`?refresh=1`) |
-
+| On-chain records | `GET /api/chain/config`, `GET /api/chain/:kind/:id` (status; kind is `invoice`, `bill`, `payee` or `batch`), `POST /api/chain/:kind/:id/prepare` (what the wallet signs, or a retry), `POST /api/chain/:kind/:id/submit` |
 ## Run locally
 
 Same as [For judges](#for-judges). `npm run dev:api` runs `vite build` and then `wrangler pages dev`, which serves `dist/` (`pages_build_output_dir` in `wrangler.toml`) together with the Pages Functions and the local D1 database; re-run it to pick up frontend changes, or use `npm run dev` (Vite, `PORT=24010` from `.env.example`), which forwards `/api` to `http://127.0.0.1:24011` (`vite.config.ts`). Wrangler reads the backend variables from `.env` (or `.dev.vars` if present). Live 1Click and NEAR mainnet are used even in local dev; there is no testnet.
@@ -176,10 +189,23 @@ Same as [For judges](#for-judges). `npm run dev:api` runs `vite build` and then 
 | `ONECLICK_API_KEY` | no | unset | 1Click partner key; without it 1Click adds a 0.25 % fee. |
 | `ONECLICK_BASE_URL` | no | `https://1click.chaindefuser.com` | 1Click API. |
 | `NEAR_RPC_URL` | no | `https://rpc.mainnet.fastnear.com` | NEAR RPC for balances and key checks. |
-| `NEAR_AI_API_KEY` | no | unset (AI off) | Server secret, never `VITE_`. Without it `POST /api/agent/policy/draft` and `GET /api/agent/summary` return 404 and the Agent page shows "AI features are not configured". |
-| `NEAR_AI_MODEL` | no | `openai/gpt-6-luna` | Chat model (a reasoning model, so the app leaves `max_tokens` headroom; see [docs/NEAR-AI.md](docs/NEAR-AI.md)). |
-| `NEAR_AI_BASE_URL` | no | `https://cloud-api.near.ai/v1` | OpenAI-compatible endpoint. |
-
+| `PUBLIC_BASE_URL` | no | request origin | Origin used in emailed payment links, e.g. `https://frenzypay.app`. |
+| `SMTP_HOST` | for email | unset | SMTP server. Invoice email is off unless `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS` and `MAIL_FROM` are set. Mailtrap: `live.smtp.mailtrap.io` (sending) or `sandbox.smtp.mailtrap.io` (inbox testing). |
+| `SMTP_PORT` | no | `587` | SMTP port (Mailtrap sandbox: `2525`). |
+| `SMTP_USER` | for email | unset | SMTP username. |
+| `SMTP_PASS` | for email | unset | SMTP password or token. Secret: `.env` locally, a Pages secret when deployed. |
+| `SMTP_SECURE` | no | `starttls` | `starttls`, `tls` (implicit TLS, port 465) or `none` (local test servers only). |
+| `MAIL_FROM` | for email | unset | Sender, e.g. `FrenzyPay <invoice@yourdomain>`. |
+| `MAIL_REPLY_TO` | no | unset | Reply-To address for client replies. |
+| `NEAR_NETWORK` | no | `mainnet` | `mainnet` or `testnet`: explorer links (`nearblocks.io` / `testnet.nearblocks.io`) and the deploy script's target. RPC stays `NEAR_RPC_URL`. |
+| `CONTRACT_ID` | for on-chain | unset | FrenzyPay contract account, a subaccount such as `frenzypay.maxkumbang.near`. Also lets pay links fall back to the on-chain record. |
+| `CONTRACT_OWNER_ID` | scripts only | unset | Contract owner passed to `new` at init (`scripts/setup-mainnet.md`); the server does not read it. |
+| `RELAYER_ACCOUNT_ID` | for on-chain | unset | The contract's whitelisted relayer; the server signs as this account and pays gas. |
+| `RELAYER_PUBLIC_KEY` | for on-chain | unset | `ed25519:…` public key of the relayer key. |
+| `RELAYER_PRIVATE_KEY` | for on-chain | unset | Secret. Function-call access key limited to `CONTRACT_ID` and its write methods, so it cannot move funds. Pages secret only. |
+| `CARGO_TARGET_DIR` | no | `~/.cache/frenzypay-contract-target` | Build directory for `scripts/deploy-contract.sh` (keeps contract builds out of the repo). |
+| `CHAIN_WRITES_ENABLED` | no | `false` | Only `true` turns on-chain writes on (with the four variables above). Records written on mainnet are public and permanent. |
+| `PLAYWRIGHT_BASE_URL` | no | `http://127.0.0.1:5173` | Base URL the Playwright browser tests open (see [Tests](#tests)). |
 ## Tests
 
 ```sh
@@ -192,7 +218,7 @@ npx vite preview --port 24012   # stop it with Ctrl+C when done
 PLAYWRIGHT_BASE_URL=http://127.0.0.1:24012 npm run test:e2e -- --workers=1
 ```
 
-`tests/browser/core-loop.spec.ts` runs the whole loop (sign in, invoice, payer pays from a second browser context, balance, withdraw), `tests/browser/treasury-loop.spec.ts` the treasury loop (swap, bill imported from a FrenzyPay invoice link, 2-line payroll, Home activity shows all of it, mobile More menu) and `tests/browser/agent-loop.spec.ts` the agent loop (rules saved through the signed step, a convert suggestion appears, approve, sign, done; AI summary hidden when not configured and shown when it is), all against a fake `/api`, on desktop and at 390 px with no horizontal overflow. No test moves real funds.
+`tests/browser/core-loop.spec.ts` runs the whole loop (sign in, invoice, payer pays from a second browser context, balance, withdraw), `tests/browser/treasury-loop.spec.ts` the treasury loop (swap, bill imported from a FrenzyPay invoice link, 2-line payroll, Home activity shows all of it, mobile More menu), both against a fake `/api`, on desktop and at 390 px with no horizontal overflow. No test moves real funds.
 
 ## Honest boundaries
 
@@ -201,16 +227,16 @@ PLAYWRIGHT_BASE_URL=http://127.0.0.1:24012 npm run test:e2e -- --workers=1
 - **Non-custodial.** Funds sit in your `intents.near` account, controlled by your wallet. FrenzyPay holds no keys and cannot move them. Every withdrawal, swap, bill payment and payroll line needs your signature.
 - **No fiat.** Crypto stablecoins only; no card or bank rails, no tax or legal/accounting claims.
 - **Fees.** 1Click quotes include provider fees and slippage; the payer pays the quoted amount, the owner receives the invoice total. Bills and payroll lines are quoted so the recipient receives the exact amount; you send slightly more (1 % slippage buffer) and the unused part is refunded to your Intents balance. Without a partner API key 1Click adds an extra 0.25% platform fee.
-- **No automatic execution.** The agent only suggests; each suggestion, bill and payroll line is executed only when you sign it. A bill's due date is a reminder. Suggestions are computed when you open Home or the Agent page, not on a schedule.
-- **AI limits.** NEAR AI drafts and summaries can be wrong; a draft is validated and must be signed, the summary is labelled and built from totals only. The default model has not yet been exercised with a real key (see [docs/NEAR-AI.md](docs/NEAR-AI.md)). The drafting rate limit is a fixed one-minute window per owner (up to 10 calls can land within 60 s across a window boundary). Two summary requests that miss the cache at the same moment may each call the model once; the later one overwrites the cache. When balances cannot be read the summary says so and is not cached, so each view asks the model again until they can.
+- **No automatic execution.** Each withdrawal, swap, bill and payroll line is executed only when you sign it. A bill's due date is a reminder.
+- **No spending limits or recipient whitelist.** The wallet signature on each transfer is the only gate; review the address and amount before signing.
 - **Bill pay reconciliation across FrenzyPay** works for invoices issued on the same FrenzyPay deployment (same database); for any other vendor, enter the bill manually.
 - **Named NEAR accounts** (`alice.near`) must register their public key on `intents.near` once (a wallet-approved `add_public_key` call, 1 yoctoNEAR plus gas) before they can sign withdrawals; the app guides this step. EVM accounts need no registration.
-- `npm audit --omit=dev` reports 25 advisories (3 high, 8 moderate, 14 low) in wallet-SDK transitive dependencies (e.g. `@meteorwallet/sdk`, `nanoid`, `@hot-wallet/sdk`, `@solana/web3.js`); fixes require breaking upgrades.
+- **NEAR wallet code is loaded at runtime** from each wallet's own repository (pinned to a commit) and runs in a sandboxed iframe; see [NEAR wallet connection](#near-wallet-connection) for what that does and does not protect against. The bundled wallet SDKs behind the old advisory count (`@near-wallet-selector/*`, `@meteorwallet/sdk`, `@hot-wallet/sdk`) were removed along with `@near-wallet-selector`; `@hot-labs/near-connect` has no dependencies. Re-run `npm audit --omit=dev` for a current count.
 - Balance, swap and dashboard USD figures are reference prices only; tokens without a reference price show no USD value.
 
 ## Hackathon work vs. pre-existing baseline
 
-**Baseline:** commits up to and including `7d827b1` (2026-10-21/22), a static, browser-only quote/invoice-preview prototype with no backend, no wallet sign-in, and no real payments. **Everything after `7d827b1` is hackathon work** (Plan 1 core loop, Plan 2 treasury features, Plan 3 agent and submission). Generated with `git log --oneline 7d827b1..HEAD`, newest first, plus this commit (`docs: README for the agent review fixes; regenerate the hackathon commit list`), which updates the list:
+**Baseline:** commits up to and including `7d827b1` (2026-10-21/22), a static, browser-only quote/invoice-preview prototype with no backend, no wallet sign-in, and no real payments. **Everything after `7d827b1` is hackathon work** (Plan 1 core loop, Plan 2 treasury features, Plan 3 agent and submission; the Plan 3 agent was later removed, the commits below are history). Generated with `git log --oneline 7d827b1..HEAD`, newest first, plus this commit (`docs: README for the agent review fixes; regenerate the hackathon commit list`), which updates the list:
 
 ```
 e447be7 fix(policy): only a swap into the owner's own Intents account skips spending limits
@@ -288,8 +314,11 @@ Production is the Cloudflare Pages project `frenzypay` (https://frenzypay.app) w
 ```sh
 npx wrangler pages secret put SESSION_SECRET --project-name frenzypay
 npx wrangler pages secret put ONECLICK_API_KEY --project-name frenzypay  # optional: removes the extra 0.25% fee (https://partners.near-intents.org)
-npx wrangler pages secret put NEAR_AI_API_KEY --project-name frenzypay   # optional: AI rule drafting and summary
+npx wrangler pages secret put SMTP_PASS --project-name frenzypay         # optional: invoice email (plus SMTP_HOST/SMTP_USER/MAIL_FROM as variables)
+npx wrangler pages secret put RELAYER_PRIVATE_KEY --project-name frenzypay  # optional: on-chain records, see below
 ```
+
+**On-chain public records** (optional, off by default). Issued invoices, bills, payees and payouts can be mirrored to the FrenzyPay NEAR contract (`contracts/frenzypay`, see its README for the trust model). The owner's NEAR wallet signs each record; the relayer account submits it and pays gas; mark-paid is relayer-only. D1 stays the app's source and index, and a chain failure never blocks a flow: detail pages show "On-chain: pending/failed" with Retry. EVM sign-ins cannot sign these records. The contract is deployed by hand with `scripts/setup-mainnet.md` and `scripts/deploy-contract.sh --yes-mainnet`; nothing is written until `CHAIN_WRITES_ENABLED=true`. Records on mainnet are public and permanent; client emails never go on-chain.
 
 **Manual deploy** (same steps as the workflow):
 
@@ -310,12 +339,11 @@ Gates before calling the deployment ready (none of these have been run with real
 - [ ] Live small **swap** (for example 1 USDC → wNEAR) inside the Intents account: the review's expected and minimum amounts match 1Click, the swap reaches SUCCESS and the new token appears on Home.
 - [ ] One **bill paid to a FrenzyPay invoice**: issue a ~1 USDC invoice from a second account, import its link as a bill, pay it, and confirm the bill shows Paid and the vendor's invoice flips to Paid. Also check that cancelling the vendor invoice before signing makes the payment fail with "The vendor invoice is no longer payable".
 - [ ] One **2-line payroll** (one line to a chain address, one to a NEAR Intents account): both lines reach Sent with one signature each, and each payee receives exactly the line amount.
-- [ ] Approve one live **agent convert proposal**: sign a rule that converts a small non-stablecoin balance (e.g. ~2 USD of wNEAR, with the minimum set to $1) to USDC, approve the suggestion, sign, and confirm it reaches Done and the USDC appears on Home.
-- [ ] One signed **spending limit** checked live: a withdrawal above the per-transaction cap is refused with "This exceeds your per-transaction limit" before any signature.
-- [ ] With `NEAR_AI_API_KEY` set: one "Describe your rules" draft and one AI summary; record latency and whether the default model needs a different `max_tokens` in `docs/NEAR-AI.md` (Step 2 of the NEAR AI spike).
-- [ ] Real wallet sign-in check with Meteor, HOT and MetaMask; verify the CSP in `public/_headers` allows the wallet's network calls (browser console shows no CSP violations); adjust origins if needed.
+- [ ] Real wallet sign-in check with Meteor, HOT and MetaMask on the deployed site (or `npm run dev:api`, which runs the CSP middleware). Then a NEAR key registration and one NEAR-signed transfer. The browser console must show no CSP violations; if a wallet needs another origin, add it in `server/csp.ts`. Reload after signing in with a NEAR wallet and confirm a transfer signs without the wallet modal opening again.
+- [ ] Invoice email through Mailtrap: with the sandbox (`sandbox.smtp.mailtrap.io:2525`) set in `.env`, issue an invoice with a client email under `npm run dev:api` and check the message, its Pay invoice link and the HTML/text parts in the Mailtrap inbox; then Resend, and a wrong `SMTP_PASS` must show "Invoice issued, email failed".
+- [ ] One-click **Pay with wallet** with real funds: MetaMask on Arbitrum for native ETH and for USDC (ERC-20, including the network switch), and a NEAR wallet for a NEP-141 token and for wNEAR (wrap in the same transaction). Each must reach Paid without copying the address.
 - [ ] Record resulting transaction hashes in `docs/NEAR-INTENTS.md`.
 
 ## Roadmap
 
-Per the [design spec](docs/superpowers/specs/2026-10-29-frenzypay-design.md): Plan 1 (core loop, [plan](docs/superpowers/plans/2026-10-29-plan1-core-loop.md)), Plan 2 (in-account swap, bill pay, payroll/batch payout, treasury dashboard, [plan](docs/superpowers/plans/2026-10-30-plan2-treasury-features.md)) and Plan 3 (signed policy, spending limits, whitelist, agent suggestions, NEAR AI rule drafting and summary, submission package, [plan](docs/superpowers/plans/2026-10-30-plan3-ai-treasury-agent.md)) are implemented as described above. Not yet done: a production deployment, the live launch gates above, and the demo video and X post ([docs/SUBMISSION.md](docs/SUBMISSION.md)).
+Per the [design spec](docs/superpowers/specs/2026-10-29-frenzypay-design.md): Plan 1 (core loop, [plan](docs/superpowers/plans/2026-10-29-plan1-core-loop.md)) and Plan 2 (in-account swap, bill pay, payroll/batch payout, treasury dashboard, [plan](docs/superpowers/plans/2026-10-30-plan2-treasury-features.md)) are implemented as described above. Plan 3 (treasury agent: signed policy, spending limits, whitelist, suggestions, NEAR AI drafting and summary, [plan](docs/superpowers/plans/2026-10-30-plan3-ai-treasury-agent.md)) was built and later removed by owner decision (see [Legacy D1 tables](#architecture)). Not yet done: a production deployment, the live launch gates above, and the demo video and X post ([docs/SUBMISSION.md](docs/SUBMISSION.md)).

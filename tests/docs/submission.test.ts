@@ -13,7 +13,7 @@ const between = (start: string, end: string): string => {
 test("SUBMISSION.md: 'What did you build?' is 20–2000 characters and covers NEAR's role", () => {
   const d = between("<!-- desc:start -->", "<!-- desc:end -->");
   assert.ok(d.length >= 20 && d.length <= 2000, `length ${d.length}`);
-  for (const s of ["NEAR Intents", "1Click", "intents.near", "sign", "NEAR AI Cloud"]) assert.ok(d.includes(s), `missing ${s}`);
+  for (const s of ["NEAR Intents", "1Click", "intents.near", "sign"]) assert.ok(d.includes(s), `missing ${s}`);
 });
 
 test("SUBMISSION.md: X post draft is at most 280 characters, says Built at NEAR HACKATHON and links the repo", () => {
@@ -24,7 +24,9 @@ test("SUBMISSION.md: X post draft is at most 280 characters, says Built at NEAR 
 });
 
 test("SUBMISSION.md: tracks, deadline and no invented links", () => {
-  for (const s of ["08 Real-World Money", "04 Autonomous Business", "06 AI Security & Defense", "14 Nov 2026 23:59 UTC"]) assert.ok(doc.includes(s), s);
+  for (const s of ["08 Real-World Money", "14 Nov 2026 23:59 UTC"]) assert.ok(doc.includes(s), s);
+  // The treasury agent was removed; its tracks must not be claimed.
+  for (const s of ["04 Autonomous Business", "06 AI Security & Defense", "NEAR AI"]) assert.ok(!doc.includes(s), s);
   // Production URL, video, X post and payout wallet are placeholders until they exist.
   for (const s of ["Live app: `<add after deploy>`", "Demo video: `<add after recording>`", "X demo post: `<add after posting>`", "NEAR payout wallet: `<add before submitting>`"]) assert.ok(doc.includes(s), s);
   for (const w of ["safe", "guaranteed", "insured"]) assert.ok(!new RegExp(`\\b${w}\\b`, "i").test(doc), w);

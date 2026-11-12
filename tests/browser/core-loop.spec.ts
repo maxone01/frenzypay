@@ -1,4 +1,5 @@
 import { expect, test, type BrowserContext } from "@playwright/test";
+import { pickToken } from "./helpers/combobox.ts";
 
 // One stateful fake /api shared by two browser contexts (owner and payer).
 // Nothing leaves localhost: every other origin is aborted.
@@ -109,7 +110,7 @@ test("core loop: sign in, invoice, payer pays, balance, withdraw", async ({ page
     await payer.clock.install();
     await payer.goto(link);
     await expect(payer.getByRole("heading", { name: "Pay 0.7 USDC" })).toBeVisible();
-    await payer.getByRole("option", { name: "USDC · arb" }).click();
+    await pickToken(payer, "pay-token", "arb", "USDC, Arbitrum");
     await payer.getByLabel("Refund address on arb").fill(REFUND);
     await payer.getByRole("button", { name: "Get payment instructions" }).click();
     await expect(payer.locator("#pay-address")).toHaveText(DEP_IN);
@@ -131,7 +132,7 @@ test("core loop: sign in, invoice, payer pays, balance, withdraw", async ({ page
 
   // 5. Withdraw part of it
   await page.goto("/#/withdraw");
-  await page.locator("#wd-dest").selectOption(ARB);
+  await pickToken(page, "wd-dest", "arb", "USDC, Arbitrum");
   await page.locator("#wd-amount").fill("0.5");
   await page.getByLabel("Destination address on Arbitrum (arb)").fill(DEST);
   await page.getByRole("button", { name: "Review withdrawal" }).click();

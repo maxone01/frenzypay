@@ -2,8 +2,11 @@ import { supportedChain } from "../../shared/address.ts";
 import { escapeHTML as esc } from "../../shared/text.ts";
 import { validAmount } from "../../shared/units.ts";
 import { api, postJson } from "../api.ts";
+import { chainConfig, publicNoticeHtml, publishAfterCreate } from "../chain.ts";
 import { msg } from "./transfer-ui.ts";
-import { chainName } from "./withdraw.ts";
+import { comboboxHtml, wireCombobox, type ComboOptions } from "../ui/combobox.ts";
+import { walletPickHtml, wireWalletPick } from "../ui/wallet-pick.ts";
+import { chainName, tokenItem } from "./withdraw.ts";
 
 export type BillStatus = "scheduled" | "paying" | "paid" | "cancelled";
 export type Bill = {
@@ -18,7 +21,6 @@ type Token = { assetId: string; symbol: string; blockchain: string; decimals: nu
 
 export const BILL_STATUS_LABEL: Record<BillStatus, string> = { scheduled: "Scheduled", paying: "Paying", paid: "Paid", cancelled: "Cancelled" };
 const SECTIONS: BillStatus[] = ["scheduled", "paying", "paid", "cancelled"];
-const MAX_OPTIONS = 100;
 const DAY_MS = 86_400_000;
 
 /** Whole UTC days from `now` until `dueDate` (negative once past). */
@@ -42,7 +44,7 @@ export const amountLabel = (b: Pick<Bill, "amountFormatted" | "symbol">) => (b.a
 
 export function mountBills(el: HTMLElement): () => void {
   let alive = true;
-  el.innerHTML = `<div class="heading"><div><p class="eyebrow">PAY VENDORS</p><h1>Bills</h1><p class="muted">Pay vendors from your NEAR Intents balance. You sign every payment in your wallet.</p></div><a class="primary" href="#/bills/new">+ New bill</a></div>
+  el.innerHTML = `<div class="heading"><div><p class="eyebrow">Pay vendors</p><h1>Bills</h1><p class="muted">Pay vendors from your NEAR Intents balance. You sign every payment in your wallet.</p></div><a class="primary" href="#/bills/new">+ New bill</a></div>
 <p class="error" id="bill-error" role="alert"></p><div id="bill-sections"><section class="panel"><p class="muted" role="status">Loading…</p></section></div>`;
   api<Bill[]>("/api/bills").then(
     (items) => {
@@ -55,7 +57,7 @@ export function mountBills(el: HTMLElement): () => void {
       box.innerHTML = SECTIONS.map((s) => {
         const rows = items.filter((b) => b.status === s);
         if (!rows.length) return "";
-        return `<section class="panel invoice-list" aria-labelledby="bills-${s}" id="bills-section-${s}"><p class="eyebrow" id="bills-${s}">${esc(BILL_STATUS_LABEL[s].toUpperCase())}</p>${rows
+        return `<section class="panel invoice-list" aria-labelledby="bills-${s}" id="bills-section-${s}"><p class="eyebrow" id="bills-${s}">${esc(BILL_STATUS_LABEL[s])}</p>${rows
           .map(
             (b) =>
               `<a class="invoice-record" href="#/bills/${esc(encodeURIComponent(b.id))}"><strong>${esc(b.vendor)}</strong><span>${esc(b.reference || "No reference")}</span><span>${esc(amountLabel(b))}</span><small>${billStatusBadge(b.status)} ${dueChip(b)} Due ${esc(b.dueDate)}</small></a>`,
@@ -82,14 +84,22 @@ export function mountNewBill(el: HTMLElement): () => void {
   let busy = "";
   let draft: Draft | null = null;
   const link = { value: "", dueDate: "" };
-  const form = { vendor: "", reference: "", dueDate: "", search: "", dest: "", recipient: "", amount: "" };
+  const form = { vendor: "", reference: "", dueDate: "", dest: "", recipient: "", amount: "" };
   const q = <T extends HTMLElement>(s: string) => el.querySelector<T>(s);
   const tokenOf = (id: string) => tokens.find((t) => t.assetId === id);
-  const tokenLabel = (t: Token) => `${t.symbol} · ${chainName(t.blockchain)}`;
+  // Public-record notice next to Save bill, only when on-chain writes are on.
+  let chainWrites = false;
+  const chainNotice = () => (chainWrites ? publicNoticeHtml("bill-chain-notice") : "");
+  void chainConfig().then((c) => {
+    if (!alive || !c.writes) return;
+    chainWrites = true;
+    const save = q("#bill-manual, #bill-save-import");
+    if (save && !q("#bill-chain-notice")) q("#bill-form-error")?.insertAdjacentHTML("beforebegin", chainNotice());
+  });
 
   function draw() {
     const tabs = `<div class="tabs" role="tablist"><button type="button" role="tab" id="tab-link" aria-selected="${tab === "link"}" aria-controls="bill-panel">Paste FrenzyPay invoice link</button><button type="button" role="tab" id="tab-manual" aria-selected="${tab === "manual"}" aria-controls="bill-panel">Manual</button></div>`;
-    el.innerHTML = `<div class="heading"><div><p class="eyebrow">PAY VENDORS</p><h1>New bill</h1><p class="muted">Bills are paid from your NEAR Intents balance when you choose to pay them.</p></div><a class="textbutton" href="#/bills">Back to bills</a></div>
+    el.innerHTML = `<div class="heading"><div><p class="eyebrow">Pay vendors</p><h1>New bill</h1><p class="muted">Bills are paid from your NEAR Intents balance when you choose to pay them.</p></div><a class="textbutton" href="#/bills">Back to bills</a></div>
 <section class="panel">${tabs}<div id="bill-panel" role="tabpanel">${tab === "link" ? linkHtml() : manualHtml()}</div></section>`;
     wire();
   }
@@ -107,28 +117,31 @@ export function mountNewBill(el: HTMLElement): () => void {
 <label>Pays to<input id="bill-recipient" value="FrenzyPay account ${esc(d.recipient)}" readonly></label>
 <label>Due date<input id="bill-due" type="date" value="${esc(link.dueDate || d.dueDate)}"></label></div>
 <p class="fine">These details come from the vendor's invoice and cannot be edited here.</p>
-<p class="error" id="bill-form-error" role="alert">${esc(error)}</p>
+${chainNotice()}<p class="error" id="bill-form-error" role="alert">${esc(error)}</p>
 <div class="invoice-actions"><button class="textbutton" type="button" id="bill-import-again" ${busy ? "disabled" : ""}>Use another link</button><button class="primary" type="submit" ${busy ? "disabled" : ""}>${busy ? esc(busy) : "Save bill"}</button></div></form>`;
   }
 
+  const destBox = (): ComboOptions => ({
+    id: "bill-dest", label: "Vendor receives", items: tokens.filter((t) => supportedChain(t.blockchain)).map(tokenItem), value: form.dest,
+    placeholder: "Search token or chain, e.g. USDC or arb",
+    onChange: (v) => {
+      form.dest = v;
+      draw();
+    },
+  });
+
   function manualHtml(): string {
-    const s = form.search.trim().toLowerCase();
-    const matches = tokens.filter((t) => supportedChain(t.blockchain) && (!s || tokenLabel(t).toLowerCase().includes(s) || t.blockchain.includes(s)));
-    const shown = matches.slice(0, MAX_OPTIONS);
     const d = tokenOf(form.dest);
     return `<form id="bill-manual" novalidate><div class="invoice-form-grid">
 <label>Vendor<input id="bill-vendor" maxlength="100" value="${esc(form.vendor)}"></label>
 <label>Reference<input id="bill-reference" maxlength="100" placeholder="Their invoice number" value="${esc(form.reference)}"></label>
 <label>Due date<input id="bill-due" type="date" value="${esc(form.dueDate)}"></label></div>
-<label>Search token or chain the vendor receives<input id="bill-search" autocomplete="off" placeholder="e.g. USDC or arb" value="${esc(form.search)}"></label>
-<label>Vendor receives<select id="bill-dest" size="6">${shown
-      .map((t) => `<option value="${esc(t.assetId)}" ${t.assetId === form.dest ? "selected" : ""}>${esc(tokenLabel(t))}</option>`)
-      .join("")}</select></label>
-${matches.length > shown.length ? `<p class="fine">Showing the first ${MAX_OPTIONS} matches. Type to narrow the list.</p>` : ""}
+${comboboxHtml(destBox())}
 <label>${d ? `Vendor address on ${esc(chainName(d.blockchain))}` : "Vendor address"}<input id="bill-recipient" autocomplete="off" spellcheck="false" value="${esc(form.recipient)}"></label>
+${d ? walletPickHtml({ inputId: "bill-recipient", chain: d.blockchain }) : ""}
 <p class="fine" id="bill-network-hint">${d ? `Enter an address on ${esc(chainName(d.blockchain))}. Funds sent to a wrong address or network usually cannot be recovered.` : "Choose the token first; the address must be on its network."}</p>
 <label>Amount the vendor receives${d ? ` (${esc(d.symbol)})` : ""}<input id="bill-amount" inputmode="decimal" autocomplete="off" value="${esc(form.amount)}"></label>
-<p class="error" id="bill-form-error" role="alert">${esc(error)}</p>
+${chainNotice()}<p class="error" id="bill-form-error" role="alert">${esc(error)}</p>
 <button class="primary" type="submit" ${busy ? "disabled" : ""}>${busy ? esc(busy) : "Save bill"}</button></form>`;
   }
 
@@ -145,6 +158,7 @@ ${matches.length > shown.length ? `<p class="fine">Showing the first ${MAX_OPTIO
     try {
       const b = await postJson<Bill>("/api/bills", body);
       if (!alive) return;
+      if (chainWrites) publishAfterCreate(b.id);
       location.hash = `#/bills/${encodeURIComponent(b.id)}`;
       return;
     } catch (e) {
@@ -208,20 +222,10 @@ ${matches.length > shown.length ? `<p class="fine">Showing the first ${MAX_OPTIO
       bind("#bill-reference", "reference");
       bind("#bill-recipient", "recipient");
       bind("#bill-amount", "amount");
+      const bd = tokenOf(form.dest);
+      if (bd) wireWalletPick(man, { inputId: "bill-recipient", chain: bd.blockchain });
       q<HTMLInputElement>("#bill-due")!.onchange = (e) => (form.dueDate = (e.target as HTMLInputElement).value);
-      const search = q<HTMLInputElement>("#bill-search")!;
-      search.oninput = () => {
-        form.search = search.value;
-        const pos = search.selectionStart;
-        draw();
-        const s = q<HTMLInputElement>("#bill-search")!;
-        s.focus();
-        s.setSelectionRange(pos, pos);
-      };
-      q<HTMLSelectElement>("#bill-dest")!.onchange = (e) => {
-        form.dest = (e.target as HTMLSelectElement).value;
-        draw();
-      };
+      wireCombobox(man, destBox());
       man.onsubmit = (e) => {
         e.preventDefault();
         const d = tokenOf(form.dest);

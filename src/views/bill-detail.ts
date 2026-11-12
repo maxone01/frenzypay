@@ -1,7 +1,8 @@
 import { escapeHTML as esc } from "../../shared/text.ts";
 import { api, postJson } from "../api.ts";
+import { mountChainRow, PUBLISH_FLAG } from "../chain.ts";
 import { registerKey, signAndSubmit, type TransferView } from "../sign-flow.ts";
-import { NEAR_WALLETS, walletConnected, type NearWalletId, type Session } from "../wallet/index.ts";
+import type { Session } from "../wallet/index.ts";
 import { amountLabel, billStatusBadge, dueChip, type Bill } from "./bills.ts";
 import { countdown, emptyBalanceHtml, msg } from "./transfer-ui.ts";
 import { chainName, explorerLinks } from "./withdraw.ts";
@@ -41,9 +42,10 @@ export function mountBill(el: HTMLElement, params: Record<string, string>): () =
   let error = "";
   let busy = "";
   let step: Step = { kind: "view" };
-  let nearWallet: NearWalletId = "meteor-wallet";
   const id = params.id ?? "";
   const q = <T extends HTMLElement>(s: string) => el.querySelector<T>(s);
+  const chainHost = document.createElement("div");
+  let stopChain: (() => void) | null = null;
 
   el.innerHTML = `<p class="muted" role="status">Loading…</p>`;
 
@@ -60,13 +62,17 @@ export function mountBill(el: HTMLElement, params: Record<string, string>): () =
     else if (step.kind === "review") action = reviewHtml(b, step.quote, step.confirmed);
     else if (step.kind === "register") action = registerHtml(step.publicKey);
     else action = statusHtml(b);
-    el.innerHTML = `<div class="heading"><div><p class="eyebrow">BILL</p><h1>${esc(b.vendor)}</h1><p class="muted">${billStatusBadge(b.status, b.extraPayment)} ${dueChip(b)} <span>Due ${esc(b.dueDate)}</span></p></div><a class="textbutton" href="#/bills">Back to bills</a></div>
-<section class="panel" id="bill-summary"><div class="pay-field"><span class="eyebrow">REFERENCE</span><strong>${esc(b.reference || "No reference")}</strong></div>
-<div class="pay-field"><span class="eyebrow">VENDOR RECEIVES</span><strong id="bill-amount">${esc(amountLabel(b))}</strong></div>
-<div class="pay-field"><span class="eyebrow">NETWORK</span><strong>${esc(p.network)}</strong></div>
-<div class="pay-field"><span class="eyebrow">PAYS TO</span><code>${esc(p.address)}</code></div>
-${b.source === "frenzypay" ? `<p class="fine">Imported from a FrenzyPay invoice. The vendor's invoice is marked paid when this payment settles.</p>` : ""}</section>
+    el.innerHTML = `<div class="heading"><div><p class="eyebrow">Bill</p><h1>${esc(b.vendor)}</h1><p class="muted">${billStatusBadge(b.status, b.extraPayment)} ${dueChip(b)} <span>Due ${esc(b.dueDate)}</span></p></div><a class="textbutton" href="#/bills">Back to bills</a></div>
+<section class="panel" id="bill-summary"><div class="pay-field"><span class="eyebrow">Reference</span><strong>${esc(b.reference || "No reference")}</strong></div>
+<div class="pay-field"><span class="eyebrow">Vendor receives</span><strong id="bill-amount">${esc(amountLabel(b))}</strong></div>
+<div class="pay-field"><span class="eyebrow">Network</span><strong>${esc(p.network)}</strong></div>
+<div class="pay-field"><span class="eyebrow">Pays to</span><code>${esc(p.address)}</code></div>
+${b.source === "frenzypay" ? `<p class="fine">Imported from a FrenzyPay invoice. The vendor's invoice is marked paid when this payment settles.</p>` : ""}<div id="bill-chain-slot"></div></section>
 ${action}`;
+    // The row survives this page's frequent redraws: one element, moved back into the fresh markup.
+    if (!stopChain) stopChain = mountChainRow(chainHost, "bill", b.id, { autoPublish: sessionStorage.getItem(PUBLISH_FLAG) === b.id });
+    if (sessionStorage.getItem(PUBLISH_FLAG) === b.id) sessionStorage.removeItem(PUBLISH_FLAG);
+    q("#bill-chain-slot")?.replaceWith(chainHost);
     wire();
   }
 
@@ -106,16 +112,14 @@ ${unsigned ? `<p class="fine">If you left before signing, this quote expires in 
   function reviewHtml(b: Detail, qt: Quote, confirmed: boolean): string {
     const t = qt.transfer;
     const p = payee(b);
-    const needsNearWallet = session?.kind === "near" && !walletConnected(session);
     return `<section class="panel" id="bill-review"><div class="section-title"><h2>Review payment</h2><span class="muted">Quote expires in <span id="bill-countdown">${countdown(qt.deadline)}</span></span></div>
-<div class="pay-field"><span class="eyebrow">VENDOR</span><strong id="rv-vendor">${esc(b.vendor)}</strong></div>
-<div class="pay-field"><span class="eyebrow">NETWORK</span><strong id="rv-network">${esc(p.network)}</strong></div>
-<div class="pay-field"><span class="eyebrow">ADDRESS</span><code id="rv-address">${esc(p.address)}</code></div>
+<div class="pay-field"><span class="eyebrow">Vendor</span><strong id="rv-vendor">${esc(b.vendor)}</strong></div>
+<div class="pay-field"><span class="eyebrow">Network</span><strong id="rv-network">${esc(p.network)}</strong></div>
+<div class="pay-field"><span class="eyebrow">Address</span><code id="rv-address">${esc(p.address)}</code></div>
 <p class="invoice-total"><span>Vendor receives</span><strong id="rv-receive">${esc(amountLabel(b))}</strong></p>
 <p class="invoice-total"><span>You send</span><strong id="rv-send">≈ ${esc(t.amountFormatted)} ${esc(t.originSymbol)}</strong></p>
 <p class="fine" id="rv-buffer">What you send includes a small buffer for price movement. Any unused part is refunded to your NEAR Intents balance.</p>
 <label class="radio"><input type="checkbox" id="rv-confirm" ${confirmed ? "checked" : ""}> I checked the vendor and ${b.source === "frenzypay" ? "account" : `that the address is on ${esc(p.network)}`}</label>
-${needsNearWallet ? `<label>Wallet<select id="bill-wallet">${NEAR_WALLETS.map((x) => `<option value="${x.id}" ${x.id === nearWallet ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select></label>` : ""}
 <p class="error" id="bill-detail-error" role="alert">${esc(error)}</p>
 <div class="invoice-actions"><button class="textbutton" type="button" id="bill-review-back" ${busy ? "disabled" : ""}>Back</button><button class="primary" type="button" id="bill-sign" ${confirmed && !busy ? "" : "disabled"}>${busy ? esc(busy) : "Sign in wallet"}</button></div></section>`;
   }
@@ -184,8 +188,6 @@ ${needsNearWallet ? `<label>Wallet<select id="bill-wallet">${NEAR_WALLETS.map((x
         const btn = q<HTMLButtonElement>("#bill-sign");
         if (btn) btn.disabled = !s.confirmed || !!busy;
       };
-      const wsel = q<HTMLSelectElement>("#bill-wallet");
-      if (wsel) wsel.onchange = () => (nearWallet = wsel.value as NearWalletId);
       q<HTMLButtonElement>("#bill-review-back")!.onclick = () => {
         error = "";
         void reload();
@@ -284,7 +286,6 @@ ${needsNearWallet ? `<label>Wallet<select id="bill-wallet">${NEAR_WALLETS.map((x
           draw();
         },
         {
-          nearWallet,
           confirmKeyRegistration: (publicKey) =>
             new Promise<void>((resolve, reject) => {
               busy = "";
@@ -332,6 +333,7 @@ ${needsNearWallet ? `<label>Wallet<select id="bill-wallet">${NEAR_WALLETS.map((x
     alive = false;
     window.clearInterval(tick);
     window.clearTimeout(poll);
+    stopChain?.();
     if (step.kind === "register") step.reject(new Error("Cancelled"));
   };
 }

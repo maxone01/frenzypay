@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { invoiceTotal, readDraft, validateDraft, type InvoiceDraft } from "../../shared/invoice.ts";
+import { invoiceTotal, readClientEmail, readDraft, validEmail, validateDraft, type InvoiceDraft } from "../../shared/invoice.ts";
 import { SETTLEMENT_TOKENS } from "../../shared/assets.ts";
 
 const USDC = SETTLEMENT_TOKENS[0].tokenId;
@@ -40,6 +40,20 @@ test("readDraft checks shape and limits only", () => {
   assert.throws(() => readDraft(draft({ items: Array(11).fill({ description: "a", quantity: "1", unitPrice: "1" }) })));
   // incomplete drafts are fine for readDraft
   assert.equal(readDraft(draft({ number: "", client: "" })).number, "");
+});
+
+test("clientEmail is optional, trimmed and lowercased, and must be a plain address", () => {
+  assert.equal("clientEmail" in readDraft(draft()), false);
+  assert.equal("clientEmail" in readDraft({ ...draft(), clientEmail: "   " }), false);
+  assert.equal("clientEmail" in readDraft({ ...draft(), clientEmail: null }), false);
+  assert.equal(readDraft({ ...draft(), clientEmail: "  Billing@Client.Example " }).clientEmail, "billing@client.example");
+  assert.equal(readClientEmail("a.b+tag@sub.client.example"), "a.b+tag@sub.client.example");
+  for (const bad of [
+    "no-at-sign", "a@b", "a@-b.example", "a@b.example\r\nBcc: c@d.example", "<a@b.example>", "a,b@c.example", '"q"@b.example',
+    "a@b.example.", `${"x".repeat(65)}@b.example`, `a@${"b".repeat(250)}.example`, 42,
+  ])
+    assert.throws(() => readClientEmail(bad), /valid client email/, String(bad));
+  assert.equal(validEmail(`${"x".repeat(64)}@b.example`), true);
 });
 
 test("validateDraft enforces completeness", () => {

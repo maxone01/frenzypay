@@ -34,6 +34,14 @@ A FrenzyPay user can pay another FrenzyPay user's issued invoice from their own 
 
 Manual bills (any address on any supported chain, or any Intents account) are paid with the same engine but have no vendor-side record.
 
+## Emailing the invoice
+
+An invoice may carry an optional client email (stored lowercase in the invoice data, never shown on the public pay page). When it is set, Issue emails the payment link to it right after issuing; the owner can Send or Resend from the invoice page (`POST /api/invoices/:id/send`). The recipient is always the stored address, never one from the request. Sending uses SMTP (`server/email.ts`, settings in `.env.example`); without `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS` and `MAIL_FROM` the page says "Email is not configured". An email failure never blocks issuing: the invoice is issued, the page says "Invoice issued, email failed. Copy the link.", and the attempt is stored in `invoice_emails`. At most 5 emails per invoice and 30 per owner in any hour, failed attempts included.
+
+## Paying from a wallet
+
+After a quote, the pay page offers "Pay with wallet" when it can build the exact transaction (`shared/wallet-pay.ts`): native coin or ERC-20 `transfer` on Ethereum, Base, Arbitrum, Optimism, Polygon, BNB Smart Chain, Avalanche and Gnosis through the browser wallet (switching or adding the network first), and NEP-141 tokens on NEAR through a NEAR wallet (`storage_deposit` for the deposit address, then `ft_transfer`; wNEAR wraps native NEAR in the same transaction). The amount is the attempt's exact `amountIn`. The page states amount, token, chain and deposit address before the wallet opens, and the wallet still asks the payer to approve. The returned transaction hash is passed to 1Click as a hint (the same `deposit` call as the manual form) and the page shows Processing. Solana, Bitcoin, Tron and tokens whose contract cannot be confirmed keep the copy-address flow; EVM payments also get an EIP-681 link for mobile wallets.
+
 ## Not covered
 
-No fiat, tax, legal or accounting guarantees; no email or messaging; no partial-payment tracking; no automatic refunds of duplicate payments; no scheduled or automatic bill payments (a due date is a reminder; the agent can suggest paying a bill due soon, and the payment still needs your signature).
+No fiat, tax, legal or accounting guarantees; no messaging beyond the invoice email; no partial-payment tracking; no automatic refunds of duplicate payments; no scheduled or automatic bill payments (a due date is a reminder; paying a bill always needs your signature).

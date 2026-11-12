@@ -10,6 +10,8 @@ export type InvoiceDraft = {
   tokenId: string;
   notes: string;
   items: InvoiceLine[];
+  /** Where Issue and Send/Resend email the payment link. Trimmed and lowercase; absent when not set. */
+  clientEmail?: string;
 };
 export type InvoiceStatus = "draft" | "issued" | "paid" | "cancelled";
 export type InvoiceRow = {
@@ -37,6 +39,8 @@ export type PublicInvoice = {
   totalFormatted: string;
   payTo: string;
   dueDate: string;
+  /** "chain": read from the public contract record because this server has no copy; display only, not payable here. */
+  source?: "chain";
 };
 
 const plain = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
@@ -63,6 +67,7 @@ export function readDraft(value: unknown): InvoiceDraft {
       throw Error("Invalid line item.");
     return { description: item.description, quantity: item.quantity, unitPrice: item.unitPrice };
   });
+  const clientEmail = readClientEmail(value.clientEmail);
   return {
     number: value.number,
     client: value.client,
@@ -71,7 +76,26 @@ export function readDraft(value: unknown): InvoiceDraft {
     tokenId: value.tokenId,
     notes: value.notes,
     items,
+    ...(clientEmail ? { clientEmail } : {}),
   };
+}
+
+// Deliberately narrower than RFC 5322: no quoted local parts, no IP literals, nothing that could carry
+// CR/LF, `<`, `>` or a comma into an SMTP command or header.
+const EMAIL = /^[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*@(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+
+export function validEmail(email: string): boolean {
+  return email.length <= 254 && EMAIL.test(email) && email.indexOf("@") <= 64;
+}
+
+/** Optional client email: empty or missing means none; otherwise trimmed, lowercased and checked. */
+export function readClientEmail(v: unknown): string | undefined {
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== "string" || v.length > 300) throw Error("Enter a valid client email or leave it empty.");
+  const email = v.trim().toLowerCase();
+  if (!email) return undefined;
+  if (!validEmail(email)) throw Error("Enter a valid client email or leave it empty.");
+  return email;
 }
 
 export function invoiceTotal(d: InvoiceDraft): bigint {

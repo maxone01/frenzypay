@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { base58 } from "@scure/base";
+import { openList } from "./helpers/combobox.ts";
 
 const ADDR = "0xabcdef0123456789abcdef0123456789abcdef01";
 const USDC = "nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1";
@@ -74,8 +75,9 @@ async function fillForm(page: Page) {
   await expect(page.getByRole("heading", { name: "Withdraw" })).toBeVisible();
   await expect(page.getByText("Exchange deposit address or your wallet; check the network matches")).toBeVisible();
   // Unsupported chains are not offered.
-  await expect(page.locator("#wd-dest option")).toHaveCount(2);
-  await page.locator("#wd-dest").selectOption(ARB);
+  await expect(await openList(page, "wd-dest")).toHaveCount(2);
+  await page.getByRole("option", { name: "USDC, Arbitrum" }).click();
+  await expect(page.locator("#wd-dest")).toHaveAttribute("data-value", ARB);
 }
 
 test("EVM withdrawal: review, explicit confirmation, wallet signature, progress, success", async ({ page }) => {
@@ -145,8 +147,9 @@ test("server rejection is shown and nothing is signed", async ({ page }) => {
   await page.getByRole("button", { name: "Review withdrawal" }).click();
   await expect(page.locator("#wd-error")).toHaveText("Enter a valid arb address.");
   await expect(page.locator("#wd-review")).toHaveCount(0);
-  const eth = await page.evaluate(() => (window as unknown as { __eth: unknown[] }).__eth);
-  expect(eth).toEqual([]);
+  const eth = await page.evaluate(() => (window as unknown as { __eth: { method: string }[] }).__eth);
+  // Reading accounts for the connected-wallet chips (eth_accounts) never opens a popup; nothing may be signed or sent.
+  expect(eth.filter((c) => c.method !== "eth_accounts")).toEqual([]);
 });
 
 test("after a submit error the review asks for confirmation again", async ({ page }) => {

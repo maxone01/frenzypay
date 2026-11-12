@@ -5,9 +5,14 @@ import { api } from "../api.ts";
 import { details } from "./invoice-detail.ts";
 import { txLinks } from "./invoices.ts";
 import { routeHtml } from "./transfer-ui.ts";
-import { chainName } from "./withdraw.ts";
+import { comboboxHtml, wireCombobox, type ComboOptions } from "../ui/combobox.ts";
+import { walletPickHtml, wireWalletPick } from "../ui/wallet-pick.ts";
+import { chainName, tokenItem } from "./withdraw.ts";
+import { EVM_CHAINS, eip681, payPlan, type PayPlan, type PayToken } from "../../shared/wallet-pay.ts";
+import { hasEvmProvider, payEvm } from "../wallet/evm.ts";
+import { payNear } from "../wallet/near.ts";
 
-type Token = { assetId: string; symbol: string; blockchain: string; decimals: number };
+type Token = PayToken;
 type Attempt = {
   symbol: string; blockchain: string;
   depositAddress: string; depositMemo?: string; originAsset: string; amountIn: string; amountInFormatted: string;
@@ -29,7 +34,6 @@ const ownNotice = (a: Attempt | undefined) =>
   a?.outcome === "mismatch" ? MISMATCH : a?.outcome === "duplicate" || a?.outcome === "after_cancel" ? EXTRA : "";
 
 const post = <T>(path: string, body: unknown) => api<T>(path, { method: "POST", body: JSON.stringify(body) });
-const label = (t: Token) => `${t.symbol} · ${t.blockchain}`;
 
 function store(key: string, v?: Attempt | null): Attempt | null {
   try {
@@ -48,6 +52,27 @@ function readDismissed(key: string): Set<string> {
   } catch {
     return new Set();
   }
+}
+
+/** Plain text for a wallet that did not send. Only a clear rejection may say "Nothing was sent". */
+export function payErrorText(e: unknown): string {
+  const code = (e as { code?: unknown } | null)?.code;
+  const msg = e instanceof Error ? e.message : "";
+  if (code === 4001 || /user rejected|user denied|rejected by user/i.test(msg)) return "You declined in your wallet. Nothing was sent.";
+  if (code === -32002) return "Your wallet already has a request open. Finish or close it in the wallet, then try again.";
+  if (msg && msg.length < 200) return msg;
+  return "The wallet did not confirm the payment. Check your wallet's activity before trying again, or copy the address and amount below.";
+}
+
+/** Review sentence shown above the button: exactly what the wallet will be asked to send. */
+export function reviewHtml(plan: PayPlan, a: { amountInFormatted: string; symbol: string; blockchain: string }): string {
+  const amount = `<strong>${esc(a.amountInFormatted)} ${esc(a.symbol)}</strong>`;
+  if (plan.kind === "evm") {
+    const via = plan.asset === "erc20" ? ` (token contract <code>${esc(plan.token!)}</code>)` : "";
+    return `Your wallet will ask you to send exactly ${amount}${via} on <strong>${esc(EVM_CHAINS[plan.chain].name)}</strong> (chain ${plan.chainId}) to <code>${esc(plan.depositAddress)}</code>. Nothing is sent until you approve it there.`;
+  }
+  const wrap = plan.wrapNative ? ` Your wallet wraps that much native NEAR into wNEAR and sends it in the same transaction.` : "";
+  return `Your NEAR wallet will ask you to send exactly ${amount} (token <code>${esc(plan.contract)}</code>) on <strong>NEAR</strong> to <code>${esc(plan.depositAddress)}</code>.${wrap} Up to ${plan.wrapNative ? "0.0025" : "0.00125"} NEAR is attached for token storage and refunded when not needed. Nothing is sent until you approve it there.`;
 }
 
 function countdown(deadline: string, now = Date.now()): string {
@@ -75,7 +100,26 @@ export function mountPay(el: HTMLElement, params: Record<string, string>): () =>
   let busy = false;
   let chosen = "";
   let refund = "";
-  let search = "";
+  /** Deposit address → tx hash this browser's wallet sent to it. Kept so a reload never offers to pay twice. */
+  const sentKey = `${key}:sent`;
+  const sent: Record<string, string> = (() => {
+    try {
+      const v = JSON.parse(sessionStorage.getItem(sentKey) ?? "{}") as unknown;
+      return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, string>) : {};
+    } catch {
+      return {};
+    }
+  })();
+  const saveSent = () => {
+    try {
+      sessionStorage.setItem(sentKey, JSON.stringify(sent));
+    } catch {
+      /* storage unavailable */
+    }
+  };
+  let walletBusy = false;
+  let walletError = "";
+  let depositNote = "";
 
   el.innerHTML = `<p class="muted" role="status">Loading…</p>`;
 
@@ -87,13 +131,17 @@ export function mountPay(el: HTMLElement, params: Record<string, string>): () =>
       el.innerHTML = `<div class="heading"><div><h1>Invoice unavailable</h1><p class="error" role="alert">${esc(error)}</p></div></div>`;
       return;
     }
-    const head = `<div class="heading"><div><p class="eyebrow">INVOICE ${esc(inv.data.number)}</p><h1>Pay ${esc(inv.totalFormatted)} ${esc(inv.symbol)}</h1><p class="muted">Paid to ${esc(inv.payTo)} on NEAR Intents</p></div></div>`;
+    const head = `<div class="heading"><div><p class="eyebrow">Invoice ${esc(inv.data.number)}</p><h1>Pay ${esc(inv.totalFormatted)} ${esc(inv.symbol)}</h1><p class="muted">Paid to ${esc(inv.payTo)} on NEAR Intents</p></div></div>`;
     const summary = `<section class="panel">${details(inv.data)}</section>`;
     const ownAlert = own ? `<p class="error" role="alert">${esc(own)}</p>` : "";
     let body = "";
     if (inv.status === "paid") body = paid(ownAlert);
     else if (inv.status === "cancelled") body = `<section class="panel"><h2>Cancelled</h2>${ownAlert}<p class="muted">This invoice was cancelled and can no longer be paid.</p></section>`;
-    else if (attempt && active(attempt)) body = settling(attempt) ? processing(attempt) : instructions(attempt);
+    // Only the public on-chain record exists here (no FrenzyPay copy to take payment against).
+    else if (inv.source === "chain")
+      body = `<section class="panel" id="pay-chain-only"><h2>Public record only</h2><p class="muted">This invoice was read from its public record on the NEAR blockchain. It cannot be paid through this page; ask the sender for a current payment link.</p></section>`;
+    else if (attempt && active(attempt))
+      body = settling(attempt) || (attempt.status === "PENDING_DEPOSIT" && sent[attempt.depositAddress]) ? processing(attempt) : instructions(attempt);
     else body = form(attempt?.expired ?? false);
     el.innerHTML = `${head}${summary}${body}`;
     wire();
@@ -101,21 +149,51 @@ export function mountPay(el: HTMLElement, params: Record<string, string>): () =>
 
   function paid(ownAlert: string): string {
     const hashes = attempts.find((a) => a.outcome === "paid")?.destinationTxHashes ?? [];
-    return `<section class="panel"><h2>Paid — thank you</h2>${ownAlert}<p class="muted">This invoice has been paid. Thank you.</p>${hashes.length ? `<p class="fine">Settlement on NEAR: ${txLinks(hashes)}</p>` : ""}</section>`;
+    return `<section class="panel"><h2>Paid — thank you</h2>${ownAlert}<p class="muted">This invoice is paid in full. There is nothing more to send.</p>${hashes.length ? `<p class="fine">Settlement on NEAR: ${txLinks(hashes)}</p>` : ""}</section>`;
   }
 
   function processing(a: Attempt): string {
-    return `<section class="panel pay-instructions"><div class="section-title"><h2>Processing</h2></div><p class="muted" role="status">Your deposit${a.amountInFormatted ? ` of ${esc(a.amountInFormatted)} ${esc(a.symbol)}` : ""} was received and is being settled. This usually takes a few minutes. You can keep this page open.</p></section>`;
+    const hash = sent[a.depositAddress];
+    const text =
+      a.status === "PENDING_DEPOSIT" && hash
+        ? `Your wallet sent the payment${a.amountInFormatted ? ` of ${esc(a.amountInFormatted)} ${esc(a.symbol)}` : ""}. It is matched once the transaction confirms${a.blockchain ? ` on ${esc(chainName(a.blockchain))}` : ""}, then settled. This usually takes a few minutes. Do not pay again; you can keep this page open.`
+        : `Your deposit${a.amountInFormatted ? ` of ${esc(a.amountInFormatted)} ${esc(a.symbol)}` : ""} was received and is being settled. This usually takes a few minutes. You can keep this page open.`;
+    return `<section class="panel pay-instructions"><div class="section-title"><h2>Processing</h2></div><p class="muted" role="status">${text}</p>${
+      hash ? `<div class="pay-field"><span class="eyebrow">Your transaction</span><code id="pay-tx">${esc(hash)}</code></div>` : ""
+    }${depositNote ? `<p class="fine">${esc(depositNote)}</p>` : ""}</section>`;
   }
 
+  /** "Pay with wallet" block, or a plain note when this chain/token has no one-click path here. */
+  function walletBlock(a: Attempt): string {
+    if (a.status !== "PENDING_DEPOSIT" || !a.amountIn) return "";
+    const plan = payPlan(tokenOf(a.originAsset), a.depositAddress, a.amountIn, a.depositMemo);
+    if (!plan) return `<p class="fine pay-wallet-alt">Paying from a connected wallet is not available for this token on ${esc(chainName(a.blockchain))} yet. Copy the address and exact amount below into your wallet.</p>`;
+    const injected = plan.kind === "near" || hasEvmProvider();
+    const button = injected
+      ? `<button class="primary" type="button" id="pay-wallet" ${walletBusy ? "disabled" : ""}>${plan.kind === "near" ? "Pay with NEAR wallet" : "Pay with wallet"}</button>`
+      : `<p class="fine">No browser wallet found on this device.</p>`;
+    const mobile = plan.kind === "evm" ? `<p class="fine pay-wallet-alt"><a href="${esc(eip681(plan))}" id="pay-eip681">Open in a mobile wallet</a> (EIP-681 link; check the amount and network before you approve).</p>` : "";
+    return `<div class="pay-wallet"><p id="pay-wallet-review">${reviewHtml(plan, a)}</p>${button}${mobile}<p class="fine pay-wallet-status" id="pay-wallet-status" role="status">${walletBusy ? "Confirm the payment in your wallet…" : ""}</p><p class="error pay-wallet-error" id="pay-wallet-error" role="alert">${esc(walletError)}</p></div>`;
+  }
+
+  const tokenBox = (): ComboOptions => ({
+    id: "pay-token", label: "Token", items: tokens.filter((t) => supportedChain(t.blockchain)).map(tokenItem), value: chosen,
+    placeholder: "Search token or chain, e.g. USDC or arb",
+    onChange: (v) => {
+      chosen = v;
+      refund = el.querySelector<HTMLInputElement>("#pay-refund")!.value;
+      error = "";
+      draw();
+      if (v) el.querySelector<HTMLInputElement>("#pay-refund")?.focus();
+    },
+  });
+
   function form(expired: boolean): string {
-    const q = search.trim().toLowerCase();
-    const list = tokens.filter((t) => supportedChain(t.blockchain) && (!q || label(t).toLowerCase().includes(q)));
     const t = tokenOf(chosen);
     return `<section class="panel"><div class="section-title"><h2>Pay with</h2></div>${expired ? `<p class="error" role="alert">Your previous payment instructions expired. Do not send funds to the old address. Get new instructions below.</p>` : notice ? `<p class="error" role="alert">${esc(notice)}</p>` : ""}<form id="pay-form" novalidate>
-<label>Search token or chain<input id="pay-search" autocomplete="off" placeholder="e.g. USDC or arb" value="${esc(search)}"></label>
-<label>Token<select id="pay-token" size="6">${list.map((x) => `<option value="${esc(x.assetId)}" ${x.assetId === chosen ? "selected" : ""}>${esc(label(x))}</option>`).join("")}</select></label>
+${comboboxHtml(tokenBox())}
 <label>${t ? `Refund address on ${esc(t.blockchain)}` : "Refund address"}<input id="pay-refund" autocomplete="off" spellcheck="false" value="${esc(refund)}" ${t ? "" : "disabled"}></label>
+${t ? walletPickHtml({ inputId: "pay-refund", chain: t.blockchain }) : ""}
 <p class="fine">If the payment cannot complete, your funds are returned to this address on the chain you pay from. Double-check it.</p>
 <p class="error" id="pay-error" role="alert">${esc(error)}</p>
 <button class="primary" type="submit" ${busy ? "disabled" : ""}>Get payment instructions</button></form></section>`;
@@ -125,11 +203,12 @@ export function mountPay(el: HTMLElement, params: Record<string, string>): () =>
     const done = a.status !== "PENDING_DEPOSIT";
     return `<section class="panel pay-instructions"><div class="section-title"><h2>Send payment</h2></div>
 ${a.amountInFormatted ? `<p class="invoice-total"><span>Send exactly</span><strong id="pay-amount">${esc(a.amountInFormatted)} ${esc(a.symbol)}</strong></p>
-<p class="muted">on ${esc(a.blockchain)}</p>
-${inv ? routeHtml([{ symbol: a.symbol, where: chainName(a.blockchain) }, { symbol: inv.symbol, where: "NEAR Intents" }]) : ""}` : `<p class="error" role="alert">The amount for these instructions is unavailable right now. Do not send funds until it is shown. Reload to try again.</p>`}
+<p class="muted">on ${esc(a.blockchain)} <button class="textbutton" type="button" data-copy="${esc(a.amountInFormatted)}">Copy amount</button></p>
+${inv ? routeHtml([{ symbol: a.symbol, where: chainName(a.blockchain) }, { symbol: inv.symbol, where: "NEAR Intents" }]) : ""}
+${a.depositAddress ? walletBlock(a) : ""}` : `<p class="error" role="alert">The amount for these instructions is unavailable right now. Do not send funds until it is shown. Reload to try again.</p>`}
 ${a.status === "INCOMPLETE_DEPOSIT" ? `<p class="error" role="alert">The deposit received is less than required. Send the remaining amount before the deadline, or it will be refunded.</p>` : ""}
-<div class="pay-field"><span class="eyebrow">DEPOSIT ADDRESS</span><code id="pay-address">${esc(a.depositAddress)}</code><button class="textbutton" type="button" data-copy="${esc(a.depositAddress)}">Copy address</button></div>
-${a.depositMemo ? `<div class="pay-field"><span class="eyebrow">MEMO (REQUIRED)</span><code id="pay-memo">${esc(a.depositMemo)}</code><button class="textbutton" type="button" data-copy="${esc(a.depositMemo)}">Copy memo</button></div>` : ""}
+<div class="pay-field"><span class="eyebrow">Deposit address</span><code id="pay-address">${esc(a.depositAddress)}</code><button class="textbutton" type="button" data-copy="${esc(a.depositAddress)}">Copy address</button></div>
+${a.depositMemo ? `<div class="pay-field"><span class="eyebrow">Memo (required)</span><code id="pay-memo">${esc(a.depositMemo)}</code><button class="textbutton" type="button" data-copy="${esc(a.depositMemo)}">Copy memo</button></div>` : ""}
 <p class="fine">Send exactly this amount from the selected chain. Unused amount is refunded to your refund address.</p>
 ${done ? `<p class="muted" role="status">Status: ${esc(a.status.replaceAll("_", " ").toLowerCase())}</p>` : `<p class="muted" role="status">Expires in <strong id="pay-countdown">${esc(countdown(a.deadline))}</strong></p>`}
 <details><summary>I've sent it</summary><form id="tx-form" novalidate><label>Transaction hash<input id="tx-hash" autocomplete="off" spellcheck="false"></label><p class="error" id="tx-error" role="alert"></p><p class="fine" id="tx-ok" role="status"></p><button class="textbutton" type="submit">Submit transaction hash</button></form></details>
@@ -138,21 +217,11 @@ ${done ? `<p class="muted" role="status">Status: ${esc(a.status.replaceAll("_", 
 
   function wire() {
     const q = <T extends HTMLElement>(s: string) => el.querySelector<T>(s);
-    q<HTMLInputElement>("#pay-search")?.addEventListener("input", (e) => {
-      search = (e.target as HTMLInputElement).value;
-      refund = q<HTMLInputElement>("#pay-refund")!.value;
-      draw();
-      const next = q<HTMLInputElement>("#pay-search")!;
-      next.focus();
-      next.setSelectionRange(search.length, search.length);
-    });
-    q<HTMLSelectElement>("#pay-token")?.addEventListener("change", (e) => {
-      chosen = (e.target as HTMLSelectElement).value;
-      refund = q<HTMLInputElement>("#pay-refund")!.value;
-      error = "";
-      draw();
-      q<HTMLInputElement>("#pay-refund")?.focus();
-    });
+    if (q("#pay-form")) {
+      wireCombobox(el, tokenBox());
+      const t = tokenOf(chosen);
+      if (t) wireWalletPick(el, { inputId: "pay-refund", chain: t.blockchain });
+    }
     q<HTMLFormElement>("#pay-form")?.addEventListener("submit", async (e) => {
       e.preventDefault();
       refund = q<HTMLInputElement>("#pay-refund")!.value.trim();
@@ -186,6 +255,7 @@ ${done ? `<p class="muted" role="status">Status: ${esc(a.status.replaceAll("_", 
         }
       };
     });
+    q<HTMLButtonElement>("#pay-wallet")?.addEventListener("click", () => void payFromWallet());
     q("#pay-restart")?.addEventListener("click", () => {
       if (attempt) {
         dismissed.add(attempt.depositAddress);
@@ -225,6 +295,42 @@ ${done ? `<p class="muted" role="status">Status: ${esc(a.status.replaceAll("_", 
           draw();
         } else cd.textContent = countdown(attempt.deadline);
       }, 1000);
+    }
+  }
+
+  /** Only ever called from the Pay button. The wallet shows the transaction and the payer approves it there. */
+  async function payFromWallet() {
+    const a = attempt;
+    if (!a || walletBusy || sent[a.depositAddress] || a.status !== "PENDING_DEPOSIT" || a.expired) return;
+    const token = tokenOf(a.originAsset);
+    const plan = payPlan(token, a.depositAddress, a.amountIn, a.depositMemo);
+    if (!plan || !token) return;
+    walletBusy = true;
+    walletError = "";
+    draw();
+    let hash: string;
+    try {
+      hash = plan.kind === "evm" ? await payEvm(plan) : (await payNear(token, plan.depositAddress, plan.amount)).txHash;
+    } catch (e) {
+      walletBusy = false;
+      walletError = payErrorText(e);
+      if (alive) draw();
+      return;
+    }
+    walletBusy = false;
+    sent[a.depositAddress] = hash;
+    saveSent();
+    depositNote = "";
+    if (alive) draw();
+    try {
+      await post(`${base}/deposit`, { depositAddress: a.depositAddress, txHash: hash });
+    } catch {
+      // The deposit is still found on chain without this hint; it only speeds up matching.
+      depositNote = "We could not pass the transaction to the payment network just now. It is still detected on chain; no need to pay again.";
+    }
+    if (alive) {
+      draw();
+      schedule();
     }
   }
 
@@ -298,6 +404,10 @@ ${done ? `<p class="muted" role="status">Status: ${esc(a.status.replaceAll("_", 
       ]);
       if (!alive) return;
       inv = i;
+      if (i.source === "chain") {
+        draw();
+        return;
+      }
       tokens = t;
       if (st) apply(st, true);
       else {
